@@ -311,6 +311,8 @@ gpu = ["dep:vello", "dep:vello_svg", "dep:pollster", "dep:resvg-gpu"]
 
 # PDF 내보내기 (네이티브 전용, Task #21)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cap-std = { version = "=4.0.2", default-features = false }
+cap-fs-ext = { version = "=4.0.2", default-features = false, features = ["std"] }
 svg2pdf = "0.13"
 usvg = "0.45"
 resvg = { version = "0.47", optional = true }
