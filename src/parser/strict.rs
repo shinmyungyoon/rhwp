@@ -3,6 +3,8 @@
 //! These limits cover input validation, not all model or rendering allocations.
 //! Applications that process untrusted documents still need process isolation.
 //! The existing parsing APIs retain their recovery behavior.
+//! Validation covers container structure, XML structure and core namespaces,
+//! and HWP record framing. It is not full schema or semantic validation.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
@@ -13,6 +15,8 @@ use crate::model::document::Document;
 use super::{cfb_reader, header, tags};
 
 /// Limits for one strict document load. Byte budgets include opaque resources.
+/// HWP record levels also have a fixed limit of 63. HWPX paragraph nesting
+/// has a fixed limit of 16 to prevent recovery in the model parser.
 #[derive(Clone, Copy, Debug)]
 pub struct InputLimits {
     pub max_input_bytes: usize,
@@ -35,7 +39,7 @@ impl Default for InputLimits {
             max_xml_nodes: 2_000_000,
             max_xml_depth: 128,
             max_records: 2_000_000,
-            max_record_depth: 128,
+            max_record_depth: 63,
         }
     }
 }
@@ -644,10 +648,10 @@ fn records(
         }
         let bad_size = match tag {
             tags::HWPTAG_PARA_HEADER => size < 22,
-            tags::HWPTAG_PARA_TEXT => size % 2 != 0,
-            tags::HWPTAG_PARA_CHAR_SHAPE => size % 8 != 0,
-            tags::HWPTAG_PARA_LINE_SEG => size % 36 != 0,
-            tags::HWPTAG_PARA_RANGE_TAG => size % 12 != 0,
+            tags::HWPTAG_PARA_TEXT => !size.is_multiple_of(2),
+            tags::HWPTAG_PARA_CHAR_SHAPE => !size.is_multiple_of(8),
+            tags::HWPTAG_PARA_LINE_SEG => !size.is_multiple_of(36),
+            tags::HWPTAG_PARA_RANGE_TAG => !size.is_multiple_of(12),
             tags::HWPTAG_CTRL_HEADER => size < 4,
             _ => false,
         };

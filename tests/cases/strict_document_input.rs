@@ -416,6 +416,50 @@ fn strict_input_does_not_use_permissive_cfb_header_recovery() {
 }
 
 #[test]
+fn strict_input_requires_complete_hwp_deflate_streams() {
+    let mut header = vec![0; 22];
+    header[..4].copy_from_slice(&20_001u32.to_le_bytes());
+    let mut large = record(rhwp::parser::tags::HWPTAG_PARA_HEADER, 0, &header);
+    let text: Vec<u8> = format!("{}\r", "A".repeat(20_000))
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    large.extend(record(rhwp::parser::tags::HWPTAG_PARA_TEXT, 1, &text));
+    let bytes = hwp(&large, true, &[]);
+    assert_eq!(
+        parse_document_strict(&bytes).unwrap().sections[0].paragraphs[0]
+            .text
+            .len(),
+        20_000
+    );
+    let limits = InputLimits {
+        max_entry_bytes: 8192,
+        ..Default::default()
+    };
+    assert!(parse_document_strict_with_limits(&bytes, &limits).is_err());
+    for truncate in [false, true] {
+        let mut compound = cfb::CompoundFile::open(Cursor::new(bytes.clone())).unwrap();
+        let mut raw = Vec::new();
+        std::io::Read::read_to_end(
+            &mut compound.open_stream("/BodyText/Section0").unwrap(),
+            &mut raw,
+        )
+        .unwrap();
+        if truncate {
+            raw.pop();
+        } else {
+            raw.push(0);
+        }
+        compound
+            .create_stream("/BodyText/Section0")
+            .unwrap()
+            .write_all(&raw)
+            .unwrap();
+        rejected(&compound.into_inner().into_inner());
+    }
+}
+
+#[test]
 fn strict_input_rejects_protected_and_unsupported_variants() {
     let mut bytes = hwp(&body(), false, &[]);
     let mut compound = cfb::CompoundFile::open(Cursor::new(&mut bytes)).unwrap();
