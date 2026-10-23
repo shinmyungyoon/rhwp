@@ -680,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "12218662ccac37d9714f2191252553d67585b97df8c839cbe49e0bde278dc865"
 dependencies = [
  "cmov",
 ]
@@ -2420,6 +2420,7 @@ dependencies = [
  "codepage",
  "console_error_panic_hook",
  "crc32fast",
+ "ctutils",
  "des",
  "ed25519-dalek",
  "embedded-io",
@@ -2500,6 +2501,7 @@ dependencies = [
  "base64 0.23.1",
  "cbc",
  "crc32fast",
+ "ctutils",
  "des",
  "flate2",
  "getrandom 0.4.3",
@@ -4176,9 +4178,9 @@ checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 
 [[package]]
 name = "zip"
-version = "8.6.0"
+version = "9.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+checksum = "711e8c9646791c49b7eb799a19c4ae70a9b8372ddc6a1fa4778defd1e2aa5d5e"
 dependencies = [
  "crc32fast",
  "flate2",

@@ -81,7 +81,7 @@ fn toc_doc_with_tabdef_leaders_cleared() -> Vec<u8> {
         let mut patched = 0usize;
         for i in 0..zin.len() {
             let mut entry = zin.by_index(i).expect("zip 항목");
-            let name = entry.name().to_string();
+            let name = entry.name().expect("valid ZIP entry name").into_owned();
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf).expect("zip 항목 읽기");
             if name == "Contents/header.xml" {

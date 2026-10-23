@@ -11,6 +11,7 @@
 //! [`MAX_XML_SIZE`] / [`MAX_BINDATA_SIZE`] 상한을 적용해 이를 차단한다.
 //! 실제 한국 법령/보도자료 HWPX는 충분히 이 한도 아래에 있다.
 
+use std::collections::HashMap;
 use std::io::{self, Cursor, Read};
 use zip::ZipArchive;
 
@@ -90,6 +91,8 @@ fn read_limited_accounted<R: Read>(
 /// HWPX ZIP 컨테이너 리더
 pub struct HwpxReader {
     archive: ZipArchive<Cursor<Vec<u8>>>,
+    file_names: Vec<String>,
+    file_indices: HashMap<String, usize>,
     xml_read_remaining: usize,
 }
 
@@ -97,9 +100,18 @@ impl HwpxReader {
     /// ZIP 아카이브를 연다.
     pub fn open(data: &[u8]) -> Result<Self, HwpxError> {
         let cursor = Cursor::new(data.to_vec());
-        let archive = ZipArchive::new(cursor)?;
+        let mut archive = ZipArchive::new(cursor)?;
+        let mut file_names = Vec::with_capacity(archive.len());
+        let mut file_indices = HashMap::with_capacity(archive.len());
+        for index in 0..archive.len() {
+            let name = archive.by_index_raw(index)?.name()?.into_owned();
+            file_indices.insert(name.clone(), index);
+            file_names.push(name);
+        }
         Ok(HwpxReader {
             archive,
+            file_names,
+            file_indices,
             xml_read_remaining: MAX_TOTAL_XML_BYTES,
         })
     }
@@ -159,9 +171,10 @@ impl HwpxReader {
         max_bytes: usize,
         charge_xml: bool,
     ) -> Result<Vec<u8>, HwpxError> {
+        let index = self.entry_index(path)?;
         let mut file = self
             .archive
-            .by_name(path)
+            .by_index(index)
             .map_err(|e| HwpxError::MissingFile(format!("{}: {}", path, e)))?;
         let entry_limit = max_bytes.min(if charge_xml {
             MAX_XML_SIZE
@@ -207,9 +220,10 @@ impl HwpxReader {
     /// [`Self::read_file_bytes_limited`]를 다시 거치므로, 손상된 size 메타데이터를
     /// 신뢰해 상한을 우회하지 않는다.
     pub fn file_size_limited(&mut self, path: &str, max_bytes: usize) -> Result<usize, HwpxError> {
+        let index = self.entry_index(path)?;
         let file = self
             .archive
-            .by_name(path)
+            .by_index(index)
             .map_err(|e| HwpxError::MissingFile(format!("{}: {}", path, e)))?;
         let max_bytes = max_bytes.min(MAX_BINDATA_SIZE);
         let size = usize::try_from(file.size()).map_err(|_| {
@@ -229,7 +243,14 @@ impl HwpxReader {
 
     /// 아카이브 내 파일 목록을 반환한다.
     pub fn file_names(&self) -> Vec<String> {
-        self.archive.file_names().map(|s| s.to_string()).collect()
+        self.file_names.clone()
+    }
+
+    fn entry_index(&self, path: &str) -> Result<usize, HwpxError> {
+        self.file_indices
+            .get(path)
+            .copied()
+            .ok_or_else(|| HwpxError::MissingFile(path.to_owned()))
     }
 }
 

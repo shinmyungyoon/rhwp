@@ -229,7 +229,7 @@ fn literal_note_hwpx() -> Vec<u8> {
 </hp:ctrl><hp:t>body</hp:t></hp:run></hp:p></hs:sec>"#;
     for index in 0..source.len() {
         let mut entry = source.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("valid ZIP entry name").into_owned();
         let mut contents = Vec::new();
         entry.read_to_end(&mut contents).unwrap();
         if name.ends_with("section0.xml") {

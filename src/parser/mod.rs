@@ -1813,15 +1813,16 @@ fn extract_thumbnail_from_hwpx(data: &[u8], max_bytes: usize) -> Option<Vec<u8>>
     let mut archive = zip::ZipArchive::new(cursor).ok()?;
 
     // Preview/PrvImage.png 또는 Preview/PrvImage.* 탐색
-    let entry_name = (0..archive.len()).find_map(|i| {
+    let mut entry_name = None;
+    for i in 0..archive.len() {
         let file = archive.by_index(i).ok()?;
-        let name = file.name().to_string();
+        let name = file.name().ok()?.into_owned();
         if name.starts_with("Preview/PrvImage") {
-            Some(name)
-        } else {
-            None
+            entry_name = Some(name);
+            break;
         }
-    })?;
+    }
+    let entry_name = entry_name?;
 
     let mut file = archive.by_name(&entry_name).ok()?;
     let declared_size = usize::try_from(file.size()).ok()?;
