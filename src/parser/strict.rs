@@ -173,6 +173,8 @@ fn u32_at(data: &[u8], at: usize) -> Result<u32, StrictParseError> {
 struct ZipEntry {
     name: String,
     expanded: u32,
+    method: u16,
+    payload: std::ops::Range<usize>,
 }
 
 // ZIP readers can collapse duplicate central-directory names. Inspect the raw
@@ -308,7 +310,12 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
             payload_end
         };
         ranges.push((local, entry_end));
-        entries.push(ZipEntry { name, expanded });
+        entries.push(ZipEntry {
+            name,
+            expanded,
+            method,
+            payload: payload..payload_end,
+        });
         at = end;
     }
     if at != eocd {
@@ -472,6 +479,11 @@ fn parse_hwpx(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParse
         if u64::from(entry.expanded) > allowance as u64 {
             return Err(StrictParseError::LimitExceeded("expanded bytes"));
         }
+        if entry.method == 8
+            && inflate(&data[entry.payload.clone()], allowance, |_| {})? != entry.expanded as usize
+        {
+            return Err(invalid("ZIP deflate output size mismatch"));
+        }
         let bytes = budget.read(&mut file, limits)?;
         if bytes.len() as u64 != u64::from(entry.expanded) {
             return Err(invalid("ZIP expanded size mismatch"));
@@ -563,14 +575,32 @@ fn validate_manifest(
     document: &roxmltree::Document<'_>,
     entries: &[ZipEntry],
 ) -> Result<(), StrictParseError> {
+    for name in ["manifest", "spine"] {
+        if document
+            .root_element()
+            .children()
+            .filter(|node| node.has_tag_name((OPF_NS, name)))
+            .count()
+            != 1
+        {
+            return Err(invalid("missing or duplicate HWPX package structure"));
+        }
+    }
     let names: HashSet<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
     let mut ids = HashSet::new();
     let mut paths = HashSet::new();
     let mut spine = HashSet::new();
+    let mut sections = HashSet::new();
     for node in document.descendants().filter(roxmltree::Node::is_element) {
         if node.tag_name().name() == "item" {
             if !node.has_tag_name((OPF_NS, "item")) {
                 return Err(invalid("unexpected manifest item namespace"));
+            }
+            if !node
+                .parent()
+                .is_some_and(|parent| parent.has_tag_name((OPF_NS, "manifest")))
+            {
+                return Err(invalid("unexpected manifest item location"));
             }
             let id = node
                 .attribute("id")
@@ -584,6 +614,11 @@ fn validate_manifest(
                     .attribute("href")
                     .ok_or_else(|| invalid("missing manifest reference"))?;
                 let path = package_path(href)?;
+                if href.contains("section")
+                    && node.attribute("media-type") == Some("application/xml")
+                {
+                    sections.insert(id);
+                }
                 if !names.contains(path.as_str()) || !paths.insert(path) {
                     return Err(invalid("missing or duplicate manifest resource"));
                 }
@@ -597,9 +632,18 @@ fn validate_manifest(
         let id = node
             .attribute("idref")
             .ok_or_else(|| invalid("missing spine reference"))?;
+        if !node
+            .parent()
+            .is_some_and(|parent| parent.has_tag_name((OPF_NS, "spine")))
+        {
+            return Err(invalid("unexpected spine item location"));
+        }
         if !ids.contains(id) || !spine.insert(id) {
             return Err(invalid("missing or duplicate spine item"));
         }
+    }
+    if sections.is_empty() || !sections.is_subset(&spine) {
+        return Err(invalid("missing HWPX section spine references"));
     }
     Ok(())
 }
@@ -807,10 +851,14 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
             binary_contents.push(BinDataContent {
                 id: resource.storage_id,
                 data: bytes.into(),
-                extension: resource
-                    .extension
-                    .clone()
-                    .unwrap_or_else(|| "dat".to_string()),
+                extension: resource.extension.clone().unwrap_or_else(|| {
+                    if matches!(resource.data_type, BinDataType::Storage) {
+                        "OLE"
+                    } else {
+                        "dat"
+                    }
+                    .to_string()
+                }),
             });
             found_binary.insert(name.to_string());
         } else {
@@ -866,36 +914,47 @@ fn decode_hwp(
 ) -> Result<Vec<u8>, StrictParseError> {
     if compressed {
         let allowance = budget.bytes.min(limits.max_entry_bytes);
-        let mut decoder = flate2::Decompress::new(false);
         let mut output = Vec::new();
-        let mut chunk = [0u8; 8192];
-        loop {
-            let before_in = decoder.total_in();
-            let before_out = decoder.total_out();
-            let status = decoder
-                .decompress(
-                    &raw[before_in as usize..],
-                    &mut chunk,
-                    flate2::FlushDecompress::Finish,
-                )
-                .map_err(invalid)?;
-            let written = (decoder.total_out() - before_out) as usize;
-            if written > allowance.saturating_sub(output.len()) {
-                return Err(StrictParseError::LimitExceeded("expanded bytes"));
-            }
-            output.extend_from_slice(&chunk[..written]);
-            if status == flate2::Status::StreamEnd {
-                if decoder.total_in() != raw.len() as u64 {
-                    return Err(invalid("trailing HWP compressed stream data"));
-                }
-                budget.bytes -= output.len();
-                return Ok(output);
-            }
-            if before_in == decoder.total_in() && written == 0 {
-                return Err(invalid("truncated HWP compressed stream"));
-            }
-        }
+        let length = inflate(raw, allowance, |chunk| output.extend_from_slice(chunk))?;
+        budget.bytes -= length;
+        Ok(output)
     } else {
         budget.read(raw, limits)
+    }
+}
+
+fn inflate(
+    raw: &[u8],
+    limit: usize,
+    mut write: impl FnMut(&[u8]),
+) -> Result<usize, StrictParseError> {
+    let mut decoder = flate2::Decompress::new(false);
+    let mut produced = 0usize;
+    let mut chunk = [0u8; 8192];
+    loop {
+        let before_in = decoder.total_in();
+        let before_out = decoder.total_out();
+        let status = decoder
+            .decompress(
+                &raw[before_in as usize..],
+                &mut chunk,
+                flate2::FlushDecompress::Finish,
+            )
+            .map_err(invalid)?;
+        let written = (decoder.total_out() - before_out) as usize;
+        if written > limit.saturating_sub(produced) {
+            return Err(StrictParseError::LimitExceeded("expanded bytes"));
+        }
+        produced += written;
+        write(&chunk[..written]);
+        if status == flate2::Status::StreamEnd {
+            if decoder.total_in() != raw.len() as u64 {
+                return Err(invalid("trailing compressed stream data"));
+            }
+            return Ok(produced);
+        }
+        if before_in == decoder.total_in() && written == 0 {
+            return Err(invalid("truncated compressed stream"));
+        }
     }
 }

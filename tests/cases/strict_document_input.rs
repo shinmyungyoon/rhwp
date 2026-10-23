@@ -108,9 +108,18 @@ fn doc_info() -> rhwp::model::document::DocInfo {
 }
 
 fn record(tag: u16, level: u16, payload: &[u8]) -> Vec<u8> {
-    let mut bytes = (u32::from(tag) | (u32::from(level) << 10) | ((payload.len() as u32) << 20))
+    let extended = payload.len() >= 0xfff;
+    let encoded_size = if extended {
+        0xfff
+    } else {
+        payload.len() as u32
+    };
+    let mut bytes = (u32::from(tag) | (u32::from(level) << 10) | (encoded_size << 20))
         .to_le_bytes()
         .to_vec();
+    if extended {
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    }
     bytes.extend_from_slice(payload);
     bytes
 }
@@ -299,6 +308,13 @@ fn strict_input_checks_streaming_zip_descriptors_and_compressed_limits() {
         ..Default::default()
     };
     assert!(parse_document_strict_with_limits(&bytes, &limits).is_err());
+    let mut unterminated = bytes.clone();
+    let payload = 30
+        + usize::from(u16::from_le_bytes([bytes[26], bytes[27]]))
+        + usize::from(u16::from_le_bytes([bytes[28], bytes[29]]));
+    assert_ne!(unterminated[payload] & 1, 0);
+    unterminated[payload] &= !1;
+    rejected(&unterminated);
     let mut damaged = bytes;
     let descriptor = damaged
         .windows(4)
@@ -320,12 +336,18 @@ fn strict_input_requires_all_manifest_resources_and_consistent_sections() {
         SECTION.as_bytes(),
         &[],
     ));
-    let content = CONTENT.replace("idref=\"section0\"", "idref=\"absent\"");
-    rejected(&zip(&[
-        ("Contents/content.hpf", content.as_bytes()),
-        ("Contents/header.xml", HEADER.as_bytes()),
-        ("Contents/section0.xml", SECTION.as_bytes()),
-    ]));
+    for content in [
+        CONTENT.replace("idref=\"section0\"", "idref=\"absent\""),
+        CONTENT.replace("idref=\"section0\"", "idref=\"header\""),
+        CONTENT.replace("opf:spine", "opf:guide"),
+    ] {
+        rejected(&zip(&[
+            ("mimetype", b"application/hwp+zip"),
+            ("Contents/content.hpf", content.as_bytes()),
+            ("Contents/header.xml", HEADER.as_bytes()),
+            ("Contents/section0.xml", SECTION.as_bytes()),
+        ]));
+    }
 }
 
 #[test]
