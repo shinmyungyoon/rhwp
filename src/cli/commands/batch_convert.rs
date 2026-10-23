@@ -95,7 +95,8 @@ pub(crate) fn record(
         Ok(b) => b,
         Err(e) => return fail_record(path, format!("직렬화 실패: {:?}", e)),
     };
-    if let Err(e) = fs::write(&output_path, &bytes) {
+    if let Err(e) = crate::atomic_file::write_atomically(std::path::Path::new(&output_path), &bytes)
+    {
         // [#2707] 출력 파일이 아예 안 만들어졌는데 성공 레코드를 내던 부류의 경로.
         return fail_record(
             path,

@@ -139,7 +139,7 @@ pub(super) fn edit_fill_fields(args: &[String]) -> i32 {
 
     if dry_run {
         println!("변경 예정: {} (필드 {}개)", file_path, filled.len());
-    } else {
+    } else if !verify_failed {
         println!(
             "채우기 완료: {} → {} (필드 {}개)",
             file_path,
@@ -317,15 +317,16 @@ pub(crate) fn fill_fields_core(
     if !dry_run {
         let out_bytes = edit_serialize(&mut doc, out_format)
             .map_err(|e| format!("{} 직렬화 실패 - {}", out_format.label().to_uppercase(), e))?;
-        fs::write(&output_path, &out_bytes)
-            .map_err(|e| format!("출력 쓰기 실패 - {}: {}", output_path, e))?;
-        // [#3702] 저장 직후 자기검증 — 편집 후 IR ↔ 저장본 재파싱 IR.
         if verify_mode {
             let cross = out_format == EditOutputFormat::Hwp
                 && rhwp::parser::detect_format(&bytes) == rhwp::parser::FileFormat::Hwpx;
             let (report, failed) = edit_verify_report(&doc, &out_bytes, cross);
             verify_report = report;
             verify_failed = failed;
+        }
+        if !verify_failed {
+            crate::atomic_file::write_atomically(Path::new(&output_path), &out_bytes)
+                .map_err(|e| format!("출력 쓰기 실패 - {}: {}", output_path, e))?;
         }
     }
 

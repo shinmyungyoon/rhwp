@@ -1,6 +1,7 @@
 //! Document format conversion command adapters.
 
 use std::fs;
+use std::path::Path;
 use std::process;
 
 use rhwp::provenance;
@@ -163,7 +164,7 @@ pub(crate) fn extract_pages(args: &[String]) -> i32 {
             return EXIT_RUNTIME;
         }
     };
-    if let Err(e) = fs::write(output, &bytes) {
+    if let Err(e) = atomic_file::write_atomically(Path::new(output), &bytes) {
         eprintln!("오류: 출력 쓰기 실패 - {output}: {e}");
         return EXIT_RUNTIME;
     }
@@ -308,115 +309,111 @@ pub(crate) fn convert_hwp(args: &[String]) -> i32 {
         None => export_snapshot.serialize(),
     };
     match serialized {
-        Ok(bytes) => match fs::write(output_path, &bytes) {
-            Ok(_) => {
-                // Report the persisted artifact, never a value derived from the
-                // password-bearing serialization buffer. A successful write
-                // makes this metadata the authoritative public byte count.
-                let persisted_bytes_len = fs::metadata(output_path)
-                    .map(|metadata| metadata.len() as usize)
-                    .unwrap_or_default();
-                if !json_mode {
-                    println!(
-                        "저장 완료: {} ({}KB)",
-                        output_path,
-                        persisted_bytes_len / 1024
-                    );
-                }
-                let mut verify_report = serde_json::Value::Null;
-                let mut verify_pages_report = serde_json::Value::Null;
-                let mut exit_code = EXIT_OK;
-                if verify_options.enabled() {
-                    let reloaded = match output_password.as_deref() {
-                        Some(password) => rhwp::wasm_api::HwpDocument::from_bytes_with_password(
-                            &bytes,
-                            password.as_bytes(),
-                        ),
-                        None => rhwp::wasm_api::HwpDocument::from_bytes(&bytes),
-                    };
-                    let reloaded = match reloaded {
-                        Ok(d) => d,
-                        Err(e) => {
-                            eprintln!("검증 실패: 저장된 HWP 재파싱 실패 - {}", e);
-                            process::exit(verify_reparse_failed_exit_code(verify_options));
-                        }
-                    };
-
-                    if let Some(before) = page_count_before {
-                        let after = reloaded.page_count();
-                        if before != after {
-                            eprintln!(
-                                "검증 실패(--verify-pages): 변환 전 {}쪽, 재파싱 후 {}쪽",
-                                before, after
-                            );
-                            verify_pages_report = serde_json::json!({
-                                "before": before, "after": after, "identical": false,
-                            });
-                            // [#3915] 여기서 곧장 종료하면 `--verify` 를 함께 준 경우 IR
-                            // 비교가 아예 돌지 않아 **IR 차이가 있어도 보고되지 않는다.**
-                            // 쪽수와 IR 은 서로 다른 결함을 재므로, 한쪽이 실패해도 다른
-                            // 쪽을 마저 재고 함께 보고한다. 종료 코드는 종전대로 쪽수
-                            // 실패를 우선한다(4) — 계약 무변경.
-                            exit_code = verification_exit_code(true, exit_code == 3);
-                        } else {
-                            if !json_mode {
-                                println!("검증 통과(--verify-pages): {}쪽", before);
-                            }
-                            verify_pages_report = serde_json::json!({
-                                "before": before, "after": after, "identical": true,
-                            });
-                        }
+        Ok(bytes) => {
+            let mut verify_report = serde_json::Value::Null;
+            let mut verify_pages_report = serde_json::Value::Null;
+            let mut exit_code = EXIT_OK;
+            if verify_options.enabled() {
+                let reloaded = match output_password.as_deref() {
+                    Some(password) => rhwp::wasm_api::HwpDocument::from_bytes_with_password(
+                        &bytes,
+                        password.as_bytes(),
+                    ),
+                    None => rhwp::wasm_api::HwpDocument::from_bytes(&bytes),
+                };
+                let reloaded = match reloaded {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("검증 실패: 저장된 HWP 재파싱 실패 - {}", e);
+                        process::exit(verify_reparse_failed_exit_code(verify_options));
                     }
+                };
 
-                    if verify_options.verify {
-                        let expected = verify_expected
-                            .as_ref()
-                            .expect("verify expected snapshot must exist");
-                        let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
-                            expected,
-                            reloaded.document(),
+                if let Some(before) = page_count_before {
+                    let after = reloaded.page_count();
+                    if before != after {
+                        eprintln!(
+                            "검증 실패(--verify-pages): 변환 전 {}쪽, 재파싱 후 {}쪽",
+                            before, after
                         );
-                        // [#3505, #3930] 출처별로 대상 포맷에 표현 자리가 없는 항목만
-                        // 걷어낸다. 같은 포맷(HWP5→HWP5) 왕복은 엄격 비교 그대로다.
-                        let diff = match source_format {
-                            rhwp::parser::FileFormat::Hwp => diff,
-                            rhwp::parser::FileFormat::Hwpx => {
-                                rhwp::serializer::hwpx::roundtrip::strip_hwpx_to_hwp_noise(diff)
-                            }
-                            _ => rhwp::serializer::hwpx::roundtrip::strip_cross_format_noise(diff),
-                        };
-                        if !diff.is_empty() {
-                            print_ir_verify_failure(&diff, output_path);
-                            verify_report = serde_json::json!({
-                                "identical": false, "diffCount": diff.differences.len(),
-                            });
-                            // [#3915] 쪽수 실패(4)가 이미 잡혔으면 그 코드를 유지한다 —
-                            // 두 축이 함께 실패해도 종전 계약대로 4 로 끝난다.
-                            exit_code = verification_exit_code(exit_code == 4, true);
-                        } else {
-                            if !json_mode {
-                                println!("검증 통과(--verify): IR 차이 없음");
-                            }
-                            verify_report = serde_json::json!({
-                                "identical": true, "diffCount": 0,
-                            });
+                        verify_pages_report = serde_json::json!({
+                            "before": before, "after": after, "identical": false,
+                        });
+                        // [#3915] 여기서 곧장 종료하면 `--verify` 를 함께 준 경우 IR
+                        // 비교가 아예 돌지 않아 **IR 차이가 있어도 보고되지 않는다.**
+                        // 쪽수와 IR 은 서로 다른 결함을 재므로, 한쪽이 실패해도 다른
+                        // 쪽을 마저 재고 함께 보고한다. 종료 코드는 종전대로 쪽수
+                        // 실패를 우선한다(4) — 계약 무변경.
+                        exit_code = verification_exit_code(true, exit_code == 3);
+                    } else {
+                        if !json_mode {
+                            println!("검증 통과(--verify-pages): {}쪽", before);
                         }
+                        verify_pages_report = serde_json::json!({
+                            "before": before, "after": after, "identical": true,
+                        });
                     }
                 }
+
+                if verify_options.verify {
+                    let expected = verify_expected
+                        .as_ref()
+                        .expect("verify expected snapshot must exist");
+                    let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
+                        expected,
+                        reloaded.document(),
+                    );
+                    // [#3505, #3930] 출처별로 대상 포맷에 표현 자리가 없는 항목만
+                    // 걷어낸다. 같은 포맷(HWP5→HWP5) 왕복은 엄격 비교 그대로다.
+                    let diff = match source_format {
+                        rhwp::parser::FileFormat::Hwp => diff,
+                        rhwp::parser::FileFormat::Hwpx => {
+                            rhwp::serializer::hwpx::roundtrip::strip_hwpx_to_hwp_noise(diff)
+                        }
+                        _ => rhwp::serializer::hwpx::roundtrip::strip_cross_format_noise(diff),
+                    };
+                    if !diff.is_empty() {
+                        print_ir_verify_failure(&diff, output_path);
+                        verify_report = serde_json::json!({
+                            "identical": false, "diffCount": diff.differences.len(),
+                        });
+                        // [#3915] 쪽수 실패(4)가 이미 잡혔으면 그 코드를 유지한다 —
+                        // 두 축이 함께 실패해도 종전 계약대로 4 로 끝난다.
+                        exit_code = verification_exit_code(exit_code == 4, true);
+                    } else {
+                        if !json_mode {
+                            println!("검증 통과(--verify): IR 차이 없음");
+                        }
+                        verify_report = serde_json::json!({
+                            "identical": true, "diffCount": 0,
+                        });
+                    }
+                }
+            }
+            if exit_code != EXIT_OK {
                 if json_mode {
-                    emit_envelope(persisted_bytes_len, verify_report, verify_pages_report);
+                    emit_envelope(0, verify_report, verify_pages_report);
                 }
-                if exit_code != EXIT_OK {
-                    process::exit(exit_code);
-                }
-                EXIT_OK
+                return exit_code;
             }
-            Err(e) => {
+            if let Err(e) = atomic_file::write_atomically(Path::new(output_path), &bytes) {
                 eprintln!("오류: 파일 저장 실패 - {}: {}", output_path, e);
-                // [#2707] 출력 파일이 아예 안 만들어졌는데 0으로 끝나던 경로.
-                EXIT_RUNTIME
+                return EXIT_RUNTIME;
             }
-        },
+            let persisted_bytes_len = fs::metadata(output_path)
+                .map(|metadata| metadata.len() as usize)
+                .unwrap_or_default();
+            if json_mode {
+                emit_envelope(persisted_bytes_len, verify_report, verify_pages_report);
+            } else {
+                println!(
+                    "저장 완료: {} ({}KB)",
+                    output_path,
+                    persisted_bytes_len / 1024
+                );
+            }
+            EXIT_OK
+        }
         Err(e) => {
             eprintln!("오류: 직렬화 실패 - {}", e);
             EXIT_RUNTIME
@@ -518,114 +515,113 @@ pub(crate) fn export_hwpx(args: &[String]) -> i32 {
         None => doc.export_hwpx_native(),
     };
     match serialized {
-        Ok(bytes) => match fs::write(&output_path, &bytes) {
-            Ok(_) => {
-                if !json_mode {
-                    println!(
-                        "저장 완료: {} ({}KB)",
-                        output_path.display(),
-                        bytes.len() / 1024
-                    );
-                }
-                let mut verify_report = serde_json::Value::Null;
-                let mut verify_pages_report = serde_json::Value::Null;
-                let mut exit_code = EXIT_OK;
-                if verify_options.enabled() {
-                    let reloaded = match output_password.as_deref() {
-                        Some(password) => rhwp::wasm_api::HwpDocument::from_bytes_with_password(
-                            &bytes,
-                            password.as_bytes(),
-                        ),
-                        None => rhwp::wasm_api::HwpDocument::from_bytes(&bytes),
-                    };
-                    let reloaded = match reloaded {
-                        Ok(d) => d,
-                        Err(e) => {
-                            // 재파싱 실패는 판정 불가 — JSON 모드에서도 stdout 을 비운다.
-                            eprintln!("검증 실패: 저장된 HWPX 재파싱 실패 - {}", e);
-                            process::exit(verify_reparse_failed_exit_code(verify_options));
-                        }
-                    };
-
-                    if let Some(before) = page_count_before {
-                        let after = reloaded.page_count();
-                        if before != after {
-                            eprintln!(
-                                "검증 실패(--verify-pages): 변환 전 {}쪽, 재파싱 후 {}쪽",
-                                before, after
-                            );
-                            verify_pages_report = serde_json::json!({
-                                "before": before, "after": after, "identical": false,
-                            });
-                            // [#3915] 여기서 곧장 종료하면 `--verify` 를 함께 준 경우 IR
-                            // 비교가 아예 돌지 않아 **IR 차이가 있어도 보고되지 않는다.**
-                            // 쪽수와 IR 은 서로 다른 결함을 재므로, 한쪽이 실패해도 다른
-                            // 쪽을 마저 재고 함께 보고한다. 종료 코드는 종전대로 쪽수
-                            // 실패를 우선한다(4) — 계약 무변경.
-                            exit_code = verification_exit_code(true, exit_code == 3);
-                        } else {
-                            if !json_mode {
-                                println!("검증 통과(--verify-pages): {}쪽", before);
-                            }
-                            verify_pages_report = serde_json::json!({
-                                "before": before, "after": after, "identical": true,
-                            });
-                        }
+        Ok(bytes) => {
+            let mut verify_report = serde_json::Value::Null;
+            let mut verify_pages_report = serde_json::Value::Null;
+            let mut exit_code = EXIT_OK;
+            if verify_options.enabled() {
+                let reloaded = match output_password.as_deref() {
+                    Some(password) => rhwp::wasm_api::HwpDocument::from_bytes_with_password(
+                        &bytes,
+                        password.as_bytes(),
+                    ),
+                    None => rhwp::wasm_api::HwpDocument::from_bytes(&bytes),
+                };
+                let reloaded = match reloaded {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // 재파싱 실패는 판정 불가 — JSON 모드에서도 stdout 을 비운다.
+                        eprintln!("검증 실패: 저장된 HWPX 재파싱 실패 - {}", e);
+                        process::exit(verify_reparse_failed_exit_code(verify_options));
                     }
+                };
 
-                    if verify_options.verify {
-                        let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
-                            doc.document(),
-                            reloaded.document(),
+                if let Some(before) = page_count_before {
+                    let after = reloaded.page_count();
+                    if before != after {
+                        eprintln!(
+                            "검증 실패(--verify-pages): 변환 전 {}쪽, 재파싱 후 {}쪽",
+                            before, after
                         );
-                        // HWP 계열은 HWPX와 표현 자리가 다른 필드 메타데이터가 있고,
-                        // HWP3에는 하이퍼텍스트·빈 그림 imgRect의 추가 정규화가 있다.
-                        // 실제 내용·배치 차이는 계속 검출한다 (#3739).
-                        let diff = match source_format {
-                            rhwp::parser::FileFormat::Hwp => {
-                                rhwp::serializer::hwpx::roundtrip::strip_hwp_to_hwpx_noise(diff)
-                            }
-                            rhwp::parser::FileFormat::Hwp3 => {
-                                rhwp::serializer::hwpx::roundtrip::strip_hwp3_to_hwpx_noise(
-                                    doc.document(),
-                                    reloaded.document(),
-                                    diff,
-                                )
-                            }
-                            _ => diff,
-                        };
-                        if !diff.is_empty() {
-                            print_ir_verify_failure(&diff, &output_path.display().to_string());
-                            verify_report = serde_json::json!({
-                                "identical": false, "diffCount": diff.differences.len(),
-                            });
-                            // [#3915] 쪽수 실패(4)가 이미 잡혔으면 그 코드를 유지한다 —
-                            // 두 축이 함께 실패해도 종전 계약대로 4 로 끝난다.
-                            exit_code = verification_exit_code(exit_code == 4, true);
-                        } else {
-                            if !json_mode {
-                                println!("검증 통과(--verify): IR 차이 없음");
-                            }
-                            verify_report = serde_json::json!({
-                                "identical": true, "diffCount": 0,
-                            });
+                        verify_pages_report = serde_json::json!({
+                            "before": before, "after": after, "identical": false,
+                        });
+                        // [#3915] 여기서 곧장 종료하면 `--verify` 를 함께 준 경우 IR
+                        // 비교가 아예 돌지 않아 **IR 차이가 있어도 보고되지 않는다.**
+                        // 쪽수와 IR 은 서로 다른 결함을 재므로, 한쪽이 실패해도 다른
+                        // 쪽을 마저 재고 함께 보고한다. 종료 코드는 종전대로 쪽수
+                        // 실패를 우선한다(4) — 계약 무변경.
+                        exit_code = verification_exit_code(true, exit_code == 3);
+                    } else {
+                        if !json_mode {
+                            println!("검증 통과(--verify-pages): {}쪽", before);
                         }
+                        verify_pages_report = serde_json::json!({
+                            "before": before, "after": after, "identical": true,
+                        });
                     }
                 }
+
+                if verify_options.verify {
+                    let diff = rhwp::serializer::hwpx::roundtrip::diff_documents(
+                        doc.document(),
+                        reloaded.document(),
+                    );
+                    // HWP 계열은 HWPX와 표현 자리가 다른 필드 메타데이터가 있고,
+                    // HWP3에는 하이퍼텍스트·빈 그림 imgRect의 추가 정규화가 있다.
+                    // 실제 내용·배치 차이는 계속 검출한다 (#3739).
+                    let diff = match source_format {
+                        rhwp::parser::FileFormat::Hwp => {
+                            rhwp::serializer::hwpx::roundtrip::strip_hwp_to_hwpx_noise(diff)
+                        }
+                        rhwp::parser::FileFormat::Hwp3 => {
+                            rhwp::serializer::hwpx::roundtrip::strip_hwp3_to_hwpx_noise(
+                                doc.document(),
+                                reloaded.document(),
+                                diff,
+                            )
+                        }
+                        _ => diff,
+                    };
+                    if !diff.is_empty() {
+                        print_ir_verify_failure(&diff, &output_path.display().to_string());
+                        verify_report = serde_json::json!({
+                            "identical": false, "diffCount": diff.differences.len(),
+                        });
+                        // [#3915] 쪽수 실패(4)가 이미 잡혔으면 그 코드를 유지한다 —
+                        // 두 축이 함께 실패해도 종전 계약대로 4 로 끝난다.
+                        exit_code = verification_exit_code(exit_code == 4, true);
+                    } else {
+                        if !json_mode {
+                            println!("검증 통과(--verify): IR 차이 없음");
+                        }
+                        verify_report = serde_json::json!({
+                            "identical": true, "diffCount": 0,
+                        });
+                    }
+                }
+            }
+            if exit_code != EXIT_OK {
                 if json_mode {
-                    emit_envelope(bytes.len(), verify_report, verify_pages_report);
+                    emit_envelope(0, verify_report, verify_pages_report);
                 }
-                if exit_code != EXIT_OK {
-                    process::exit(exit_code);
-                }
-                EXIT_OK
+                return exit_code;
             }
-            Err(e) => {
+            if let Err(e) = atomic_file::write_atomically(&output_path, &bytes) {
                 eprintln!("오류: 파일 저장 실패 - {}: {}", output_path.display(), e);
-                // [#2707] 출력 파일이 아예 안 만들어졌는데 0으로 끝나던 경로.
-                EXIT_RUNTIME
+                return EXIT_RUNTIME;
             }
-        },
+            if json_mode {
+                emit_envelope(bytes.len(), verify_report, verify_pages_report);
+            } else {
+                println!(
+                    "저장 완료: {} ({}KB)",
+                    output_path.display(),
+                    bytes.len() / 1024
+                );
+            }
+            EXIT_OK
+        }
         Err(e) => {
             eprintln!("오류: HWPX 직렬화 실패 - {}", e);
             EXIT_RUNTIME

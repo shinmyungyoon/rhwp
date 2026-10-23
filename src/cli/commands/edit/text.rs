@@ -193,17 +193,20 @@ pub(super) fn edit_replace_text(args: &[String]) -> i32 {
                 return code;
             }
         }
-        if let Err(e) = fs::write(&output_path, &out_bytes) {
-            eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
-            return EXIT_RUNTIME;
-        }
-        // [#3702] 저장 직후 자기검증 — 편집 후 IR ↔ 저장본 재파싱 IR.
         if verify_mode {
             let cross = out_format == EditOutputFormat::Hwp
                 && rhwp::parser::detect_format(&bytes) == rhwp::parser::FileFormat::Hwpx;
             let (report, failed) = edit_verify_report(&doc, &out_bytes, cross);
             verify_report = report;
             verify_failed = failed;
+        }
+        if !verify_failed {
+            if let Err(e) =
+                crate::atomic_file::write_atomically(Path::new(&output_path), &out_bytes)
+            {
+                eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
+                return EXIT_RUNTIME;
+            }
         }
     }
 
@@ -251,7 +254,7 @@ pub(super) fn edit_replace_text(args: &[String]) -> i32 {
             "치환 0건: {} — {:?} 없음 (출력 파일 미생성)",
             file_path, find
         );
-    } else {
+    } else if !verify_failed {
         println!(
             "치환 완료: {} → {} — {:?} → {:?} ({}건)",
             file_path, output_path, find, replace, replaced_count

@@ -113,7 +113,7 @@ pub(crate) fn build_from_ingest(args: &[String]) -> i32 {
         }
     };
 
-    match fs::write(output, &hwpx_bytes) {
+    match crate::atomic_file::write_atomically(Path::new(output), &hwpx_bytes) {
         Ok(_) => {
             let paragraph_count: usize = doc.sections.iter().map(|s| s.paragraphs.len()).sum();
             if json_mode {
@@ -250,7 +250,7 @@ pub(crate) fn run_scaffold(args: &[String]) -> i32 {
         }
     };
 
-    match fs::write(output, &hwpx_bytes) {
+    match crate::atomic_file::write_atomically(Path::new(output), &hwpx_bytes) {
         Ok(_) => {
             let paragraph_count: usize = doc.sections.iter().map(|s| s.paragraphs.len()).sum();
             let table_count = spec

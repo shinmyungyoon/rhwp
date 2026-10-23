@@ -415,17 +415,20 @@ pub(super) fn edit_set_cell(args: &[String]) -> i32 {
                 return EXIT_RUNTIME;
             }
         };
-        if let Err(e) = fs::write(&output_path, &out_bytes) {
-            eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
-            return EXIT_RUNTIME;
-        }
-        // [#3702] 저장 직후 자기검증 — 편집 후 IR ↔ 저장본 재파싱 IR.
         if verify_mode {
             let cross = out_format == EditOutputFormat::Hwp
                 && rhwp::parser::detect_format(&bytes) == rhwp::parser::FileFormat::Hwpx;
             let (report, failed) = edit_verify_report(&doc, &out_bytes, cross);
             verify_report = report;
             verify_failed = failed;
+        }
+        if !verify_failed {
+            if let Err(e) =
+                crate::atomic_file::write_atomically(Path::new(&output_path), &out_bytes)
+            {
+                eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
+                return EXIT_RUNTIME;
+            }
         }
     }
 
@@ -470,7 +473,7 @@ pub(super) fn edit_set_cell(args: &[String]) -> i32 {
             "변경 예정: {} 표{} ({},{}) {:?} → {:?}",
             file_path, table_no, row, col, old_text, new_text
         );
-    } else {
+    } else if !verify_failed {
         println!(
             "셀 기록 완료: {} → {} — 표{} ({},{}) {:?} → {:?}",
             file_path, output_path, table_no, row, col, old_text, new_text

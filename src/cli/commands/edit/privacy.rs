@@ -264,16 +264,18 @@ fn execute_redact(args: RedactArgs<'_>) -> i32 {
                 return EXIT_RUNTIME;
             }
         };
-        if let Err(e) = atomic_file::write_atomically(Path::new(&output_path), &out_bytes) {
-            eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
-            return EXIT_RUNTIME;
-        }
         if verify_mode {
             let cross = out_format == EditOutputFormat::Hwp
                 && rhwp::parser::detect_format(&bytes) == rhwp::parser::FileFormat::Hwpx;
             let (report, failed) = edit_verify_report(&doc, &out_bytes, cross);
             verify_report = report;
             verify_failed = failed;
+        }
+        if !verify_failed {
+            if let Err(e) = atomic_file::write_atomically(Path::new(&output_path), &out_bytes) {
+                eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
+                return EXIT_RUNTIME;
+            }
         }
     }
 
@@ -362,7 +364,7 @@ fn execute_redact(args: RedactArgs<'_>) -> i32 {
         }
     } else if redacted_count == 0 {
         println!("마스킹 0건: {} — 탐지 없음 (출력 파일 미생성)", file_path);
-    } else {
+    } else if !verify_failed {
         println!(
             "마스킹 완료: {} → {} — {}건",
             file_path, output_path, redacted_count
