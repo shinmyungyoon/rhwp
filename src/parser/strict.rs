@@ -394,7 +394,6 @@ fn xml<'a>(
     let text = std::str::from_utf8(bytes).map_err(invalid)?;
     let mut reader = quick_xml::Reader::from_str(text);
     let mut depth = 0usize;
-    let mut events = 0u64;
     loop {
         use quick_xml::events::Event;
         match reader.read_event().map_err(invalid)? {
@@ -411,11 +410,6 @@ fn xml<'a>(
             Event::End(_) => depth = depth.saturating_sub(1),
             Event::Eof => break,
             _ => {}
-        }
-        events += 1;
-        // End tags and declarations also count as events, but not as tree nodes.
-        if events > u64::from(budget.nodes).saturating_mul(3).saturating_add(8) {
-            return Err(StrictParseError::LimitExceeded("XML nodes"));
         }
     }
     let document = roxmltree::Document::parse_with_options(

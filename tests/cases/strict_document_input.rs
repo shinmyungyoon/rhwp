@@ -443,6 +443,22 @@ fn strict_input_enforces_configurable_budgets() {
         assert!(parse_document_strict_with_limits(&bytes, &limits).is_err());
         assert!(DocumentCore::from_bytes_strict_with_limits(&bytes, &limits).is_err());
     }
+    let section = SECTION.replace("Sample", &"&amp;".repeat(10_000));
+    let entity_text = hwpx_with(HEADER.as_bytes(), section.as_bytes(), &[]);
+    let limits = InputLimits {
+        max_xml_nodes: 15,
+        ..Default::default()
+    };
+    let document = parse_document_strict_with_limits(&entity_text, &limits).unwrap();
+    assert_eq!(document.sections[0].paragraphs[0].text, "&".repeat(10_000));
+    assert!(parse_document_strict_with_limits(
+        &entity_text,
+        &InputLimits {
+            max_xml_nodes: 14,
+            ..Default::default()
+        }
+    )
+    .is_err());
     let bytes = hwp(&body(), false, &[]);
     for limits in [
         InputLimits {
