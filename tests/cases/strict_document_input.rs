@@ -102,7 +102,8 @@ fn body() -> Vec<u8> {
 }
 
 fn hwp(body: &[u8], compressed: bool, extra: &[(&str, &[u8])]) -> Vec<u8> {
-    let mut compound = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+    let mut compound =
+        cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
     compound.create_storage("/BodyText").unwrap();
     let mut header = rhwp::model::document::FileHeader::default();
     header.version.major = 5;
@@ -161,7 +162,7 @@ fn strict_input_valid_synthetic_documents_load_through_public_apis() {
         assert_eq!(document.sections.len(), 1);
         assert_eq!(document.sections[0].paragraphs[0].text.trim_end(), "Sample");
         DocumentCore::from_bytes_strict(&bytes).unwrap();
-        rhwp::HwpDocument::from_bytes_strict(&bytes).unwrap();
+        rhwp::wasm_api::HwpDocument::from_bytes_strict(&bytes).unwrap();
         assert_eq!(bytes, original);
         let saved = rhwp::serializer::hwpx::serialize_hwpx(&document).unwrap();
         assert_eq!(parse_document_strict(&saved).unwrap().sections.len(), 1);

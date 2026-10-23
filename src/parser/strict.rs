@@ -151,16 +151,18 @@ fn safe_name(name: &str, directory: bool) -> Result<(), StrictParseError> {
 }
 
 fn u16_at(data: &[u8], at: usize) -> Result<u16, StrictParseError> {
-    let bytes = data
-        .get(at..at + 2)
-        .ok_or_else(|| invalid("truncated ZIP"))?;
+    let end = at
+        .checked_add(2)
+        .ok_or_else(|| invalid("ZIP offset overflow"))?;
+    let bytes = data.get(at..end).ok_or_else(|| invalid("truncated ZIP"))?;
     Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
 }
 
 fn u32_at(data: &[u8], at: usize) -> Result<u32, StrictParseError> {
-    let bytes = data
-        .get(at..at + 4)
-        .ok_or_else(|| invalid("truncated ZIP"))?;
+    let end = at
+        .checked_add(4)
+        .ok_or_else(|| invalid("ZIP offset overflow"))?;
+    let bytes = data.get(at..end).ok_or_else(|| invalid("truncated ZIP"))?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
@@ -176,8 +178,11 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
         .rev()
         .find(|&at| {
             data.get(at..at + 4) == Some(b"PK\x05\x06")
-                && u16_at(data, at + 20)
-                    .is_ok_and(|length| at + 22 + usize::from(length) == data.len())
+                && u16_at(data, at + 20).is_ok_and(|length| {
+                    at.checked_add(22)
+                        .and_then(|end| end.checked_add(usize::from(length)))
+                        == Some(data.len())
+                })
         })
         .ok_or_else(|| invalid("missing ZIP end record"))?;
     let count = u16_at(data, eocd + 10)?;
@@ -203,7 +208,11 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
     let mut names = HashSet::new();
     let mut ranges = Vec::new();
     for _ in 0..count {
-        if data.get(at..at + 4) != Some(b"PK\x01\x02") || at + 46 > eocd {
+        let header_end = at
+            .checked_add(46)
+            .filter(|end| *end <= eocd)
+            .ok_or_else(|| invalid("truncated ZIP central directory"))?;
+        if data.get(at..at + 4) != Some(b"PK\x01\x02") {
             return Err(invalid("truncated ZIP central directory"));
         }
         let flags = u16_at(data, at + 8)?;
@@ -226,7 +235,11 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
         if u16_at(data, at + 34)? != 0 {
             return Err(invalid("invalid ZIP disk number"));
         }
-        let end = at + 46 + name_length + extra_length + comment_length;
+        let end = header_end
+            .checked_add(name_length)
+            .and_then(|end| end.checked_add(extra_length))
+            .and_then(|end| end.checked_add(comment_length))
+            .ok_or_else(|| invalid("ZIP directory entry size overflow"))?;
         if end > eocd {
             return Err(invalid("truncated ZIP entry"));
         }
@@ -238,12 +251,19 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
             return Err(invalid("duplicate ZIP entry name"));
         }
         let local = local as usize;
-        if data.get(local..local + 4) != Some(b"PK\x03\x04") || local + 30 > central_start as usize
-        {
+        let local_header_end = local
+            .checked_add(30)
+            .filter(|end| *end <= central_start as usize)
+            .ok_or_else(|| invalid("invalid ZIP local header offset"))?;
+        if data.get(local..local + 4) != Some(b"PK\x03\x04") {
             return Err(invalid("invalid ZIP local header"));
         }
         let local_name_length = usize::from(u16_at(data, local + 26)?);
-        let payload = local + 30 + local_name_length + usize::from(u16_at(data, local + 28)?);
+        let local_extra_length = usize::from(u16_at(data, local + 28)?);
+        let payload = local_header_end
+            .checked_add(local_name_length)
+            .and_then(|end| end.checked_add(local_extra_length))
+            .ok_or_else(|| invalid("ZIP local header size overflow"))?;
         let payload_end = payload
             .checked_add(compressed as usize)
             .ok_or_else(|| invalid("ZIP entry size overflow"))?;
@@ -631,6 +651,8 @@ fn hwp_text(data: &[u8]) -> Result<(), StrictParseError> {
             at += 4;
         } else if (0xdc00..=0xdfff).contains(&unit) {
             return Err(invalid("unpaired HWP UTF-16 surrogate"));
+        } else if unit == 13 && at + 2 != data.len() {
+            return Err(invalid("HWP text follows a paragraph end control"));
         } else {
             at += 2;
         }
@@ -749,6 +771,9 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
             });
             found_binary.insert(name.to_string());
         } else {
+            if name.starts_with("/BodyText/") {
+                return Err(invalid("unexpected HWP body stream"));
+            }
             budget.bytes = budget
                 .bytes
                 .checked_sub(raw.len())
