@@ -298,24 +298,27 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
             return Err(invalid("inconsistent ZIP local sizes or checksum"));
         }
         let entry_end = if flags & 8 != 0 {
-            let descriptor =
-                if data.get(payload_end..payload_end.saturating_add(4)) == Some(b"PK\x07\x08") {
-                    payload_end.checked_add(4)
-                } else {
-                    Some(payload_end)
+            let checksum = u32_at(data, at + 16)?;
+            let check = |descriptor: usize| {
+                let end = descriptor.checked_add(12)?;
+                if end > central_start as usize {
+                    return None;
                 }
-                .ok_or_else(|| invalid("ZIP descriptor offset overflow"))?;
-            let end = descriptor
-                .checked_add(12)
-                .filter(|end| *end <= central_start as usize)
-                .ok_or_else(|| invalid("truncated ZIP data descriptor"))?;
-            if u32_at(data, descriptor)? != u32_at(data, at + 16)?
-                || u32_at(data, descriptor + 4)? != compressed
-                || u32_at(data, descriptor + 8)? != expanded
-            {
-                return Err(invalid("inconsistent ZIP data descriptor"));
-            }
-            end
+                (u32_at(data, descriptor).ok()? == checksum
+                    && u32_at(data, descriptor + 4).ok()? == compressed
+                    && u32_at(data, descriptor + 8).ok()? == expanded)
+                    .then_some(end)
+            };
+            // An unsigned descriptor can have a CRC equal to the optional
+            // signature. Match all fields before choosing either encoding.
+            let signed = payload_end.checked_add(4).and_then(|descriptor| {
+                (data.get(payload_end..descriptor) == Some(b"PK\x07\x08"))
+                    .then(|| check(descriptor))
+                    .flatten()
+            });
+            check(payload_end)
+                .or(signed)
+                .ok_or_else(|| invalid("truncated or inconsistent ZIP data descriptor"))?
         } else {
             payload_end
         };

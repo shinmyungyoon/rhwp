@@ -352,6 +352,35 @@ fn strict_input_checks_streaming_zip_descriptors_and_compressed_limits() {
 }
 
 #[test]
+fn strict_input_accepts_unsigned_descriptor_with_signature_crc() {
+    let payload = [172, 10, 122, 213];
+    assert_eq!(crc32(&payload), 0x0807_4b50);
+    let mut bytes = hwpx_with(
+        HEADER.as_bytes(),
+        SECTION.as_bytes(),
+        &[("extra.bin", &payload)],
+    );
+    let central =
+        u32::from_le_bytes(bytes[bytes.len() - 6..bytes.len() - 2].try_into().unwrap()) as usize;
+    let names: Vec<_> = bytes
+        .windows(b"extra.bin".len())
+        .enumerate()
+        .filter_map(|(at, name)| (name == b"extra.bin").then_some(at))
+        .collect();
+    assert_eq!(names.len(), 2);
+    bytes[names[0] - 24] |= 8;
+    bytes[names[1] - 38] |= 8;
+    let mut descriptor = crc32(&payload).to_le_bytes().to_vec();
+    descriptor.extend_from_slice(&4u32.to_le_bytes());
+    descriptor.extend_from_slice(&4u32.to_le_bytes());
+    drop(bytes.splice(central..central, descriptor));
+    let offset = bytes.len() - 6;
+    bytes[offset..offset + 4].copy_from_slice(&((central + 12) as u32).to_le_bytes());
+    parse_document_strict(&bytes).unwrap();
+    DocumentCore::from_bytes_strict(&bytes).unwrap();
+}
+
+#[test]
 fn strict_input_requires_all_manifest_resources_and_consistent_sections() {
     let bytes = zip(&[
         ("Contents/content.hpf", CONTENT.as_bytes()),
