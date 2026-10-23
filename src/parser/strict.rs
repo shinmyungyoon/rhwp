@@ -400,6 +400,20 @@ fn core_xml(document: &roxmltree::Document<'_>) -> Result<(), StrictParseError> 
         {
             return Err(StrictParseError::Unsupported("this HWPX element namespace"));
         }
+        let expected = match node.tag_name().name() {
+            "package" | "manifest" | "spine" | "item" | "itemref" | "metadata" | "meta" => {
+                Some(OPF_NS)
+            }
+            "head" | "refList" => Some(HEAD_NS),
+            "sec" => Some(SECTION_NS),
+            "p" | "run" | "t" | "tbl" | "tr" | "tc" | "subList" | "linesegarray" | "lineseg" => {
+                Some("http://www.hancom.co.kr/hwpml/2011/paragraph")
+            }
+            _ => None,
+        };
+        if expected.is_some_and(|expected| node.tag_name().namespace() != Some(expected)) {
+            return Err(invalid("unexpected HWPX element namespace"));
+        }
         if node.tag_name().name() == "p"
             && node
                 .ancestors()

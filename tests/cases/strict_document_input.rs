@@ -197,6 +197,10 @@ fn strict_input_rejects_xml_structure_encoding_namespace_and_entities() {
         SECTION.replace("id=\"0\"", "id=\"0\" id=\"1\""),
         SECTION.replace("http://www.hancom.co.kr/hwpml/2011/section", "urn:other"),
         SECTION.replace("http://www.hancom.co.kr/hwpml/2011/paragraph", "urn:other"),
+        SECTION.replace(
+            "http://www.hancom.co.kr/hwpml/2011/paragraph",
+            "http://www.hancom.co.kr/hwpml/2011/head",
+        ),
         format!("<!DOCTYPE sec>{SECTION}"),
         format!("<!DOCTYPE sec [<!ENTITY value \"text\">]>{SECTION}"),
         format!("<!DOCTYPE sec SYSTEM \"https://example.invalid/schema\">{SECTION}"),
@@ -336,6 +340,11 @@ fn strict_input_rejects_truncated_and_short_hwp_records() {
     let mut damaged = body();
     damaged.extend_from_slice(&((100u32 << 20) | 67).to_le_bytes());
     rejected(&hwp(&damaged, false, &[]));
+    for text in [&[0x00, 0xd8][..], &[0x09, 0x00], &[0x0d, 0x00, 0x41, 0x00]] {
+        let mut damaged = record(rhwp::parser::tags::HWPTAG_PARA_HEADER, 0, &[0; 22]);
+        damaged.extend(record(rhwp::parser::tags::HWPTAG_PARA_TEXT, 1, text));
+        rejected(&hwp(&damaged, false, &[]));
+    }
 }
 
 #[test]
