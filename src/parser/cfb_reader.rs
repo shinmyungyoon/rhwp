@@ -46,6 +46,13 @@ impl std::fmt::Display for CfbError {
 impl std::error::Error for CfbError {}
 
 impl CfbReader {
+    /// Open a CFB container without structural recovery.
+    pub fn open_strict(data: &[u8]) -> Result<Self, CfbError> {
+        let compound = cfb::CompoundFile::open_strict(Cursor::new(data.to_vec()))
+            .map_err(|error| CfbError::OpenError(error.to_string()))?;
+        Ok(Self { compound })
+    }
+
     /// 바이트 데이터에서 CFB 컨테이너 열기
     pub fn open(data: &[u8]) -> Result<Self, CfbError> {
         let cursor = Cursor::new(data.to_vec());

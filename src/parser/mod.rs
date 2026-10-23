@@ -30,7 +30,12 @@ pub mod hwpx;
 pub mod ingest;
 pub mod ole_container;
 pub mod record;
+pub mod strict;
 pub mod tags;
+
+pub use strict::{
+    parse_document_strict, parse_document_strict_with_limits, InputLimits, StrictParseError,
+};
 
 use crate::model::bin_data::BinDataContent;
 use crate::model::document::{

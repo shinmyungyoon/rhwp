@@ -156,6 +156,32 @@ impl DocumentCore {
         Self::from_bytes_inner(data, None)
     }
 
+    /// Load HWP 5 or HWPX with strict input validation.
+    /// These limits do not bound all layout or rendering allocations.
+    pub fn from_bytes_strict(data: &[u8]) -> Result<DocumentCore, HwpError> {
+        Self::from_bytes_strict_with_limits(data, &crate::parser::InputLimits::default())
+    }
+
+    pub fn from_bytes_strict_with_limits(
+        data: &[u8],
+        limits: &crate::parser::InputLimits,
+    ) -> Result<DocumentCore, HwpError> {
+        let document = crate::parser::parse_document_strict_with_limits(data, limits)
+            .map_err(|error| HwpError::InvalidFile(error.to_string()))?;
+        let source_format = if data.starts_with(b"PK") {
+            crate::parser::FileFormat::Hwpx
+        } else {
+            crate::parser::FileFormat::Hwp
+        };
+        Self::from_parsed(
+            source_format,
+            crate::parser::ParsedDocument {
+                document,
+                hml_metadata: None,
+            },
+        )
+    }
+
     /// 비밀번호로 보호된 HWP/HWPX 파일을 비밀번호와 함께 로드한다.
     ///
     /// HWP5 EncryptVersion 4, 압축 HWP3 및 ODF AES-256-CBC HWPX 비밀번호 암호 문서를 연다.
@@ -175,6 +201,13 @@ impl DocumentCore {
             None => crate::parser::parse_document_with_metadata(data),
         }
         .map_err(|e| HwpError::InvalidFile(e.to_string()))?;
+        Self::from_parsed(source_format, parsed)
+    }
+
+    fn from_parsed(
+        source_format: crate::parser::FileFormat,
+        parsed: crate::parser::ParsedDocument,
+    ) -> Result<DocumentCore, HwpError> {
         let mut document = parsed.document;
         let hml_metadata = parsed.hml_metadata;
 
