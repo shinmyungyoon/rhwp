@@ -78,7 +78,33 @@ fn hwpx_with(header: &[u8], section: &[u8], extra: &[(&str, &[u8])]) -> Vec<u8> 
 }
 
 fn hwpx() -> Vec<u8> {
-    hwpx_with(HEADER.as_bytes(), SECTION.as_bytes(), &[])
+    let document = rhwp::model::document::Document {
+        doc_info: doc_info(),
+        sections: vec![Default::default()],
+        ..Default::default()
+    };
+    let context =
+        rhwp::serializer::hwpx::context::SerializeContext::collect_from_document(&document);
+    let header = rhwp::serializer::hwpx::header::write_header(&document, &context).unwrap();
+    hwpx_with(&header, SECTION.as_bytes(), &[])
+}
+
+fn doc_info() -> rhwp::model::document::DocInfo {
+    rhwp::model::document::DocInfo {
+        font_faces: vec![
+            vec![rhwp::model::style::Font {
+                name: "Sample Font".to_string(),
+                ..Default::default()
+            }];
+            7
+        ],
+        char_shapes: vec![Default::default()],
+        para_shapes: vec![Default::default()],
+        styles: vec![Default::default()],
+        tab_defs: vec![Default::default()],
+        border_fills: vec![Default::default()],
+        ..Default::default()
+    }
 }
 
 fn record(tag: u16, level: u16, payload: &[u8]) -> Vec<u8> {
@@ -105,19 +131,21 @@ fn hwp(body: &[u8], compressed: bool, extra: &[(&str, &[u8])]) -> Vec<u8> {
     let mut compound =
         cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
     compound.create_storage("/BodyText").unwrap();
-    let mut header = rhwp::model::document::FileHeader::default();
-    header.version.major = 5;
-    header.compressed = compressed;
-    header.flags = u32::from(compressed);
+    let header = rhwp::model::document::FileHeader {
+        version: rhwp::model::document::HwpVersion {
+            major: 5,
+            ..Default::default()
+        },
+        compressed,
+        flags: u32::from(compressed),
+        ..Default::default()
+    };
     let header_bytes = rhwp::serializer::header::serialize_file_header(&header);
     let properties = rhwp::model::document::DocProperties {
         section_count: 1,
         ..Default::default()
     };
-    let doc_info = rhwp::serializer::doc_info::serialize_doc_info(
-        &rhwp::model::document::DocInfo::default(),
-        &properties,
-    );
+    let doc_info = rhwp::serializer::doc_info::serialize_doc_info(&doc_info(), &properties);
     let compress = |bytes: &[u8]| {
         if compressed {
             let mut writer =
@@ -247,6 +275,37 @@ fn strict_input_checks_opaque_zip_entries_and_safe_names() {
         SECTION.as_bytes(),
         &[("a", b""), ("a/file", b"")],
     ));
+}
+
+#[test]
+fn strict_input_checks_streaming_zip_descriptors_and_compressed_limits() {
+    let mut writer = zip::ZipWriter::new_stream(Vec::new());
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    for (name, payload) in [
+        ("mimetype", b"application/hwp+zip".as_slice()),
+        ("Contents/content.hpf", CONTENT.as_bytes()),
+        ("Contents/header.xml", HEADER.as_bytes()),
+        ("Contents/section0.xml", SECTION.as_bytes()),
+        ("extra.bin", &[0u8; 8192]),
+    ] {
+        writer.start_file(name, options).unwrap();
+        writer.write_all(payload).unwrap();
+    }
+    let bytes = writer.finish().unwrap().into_inner();
+    parse_document_strict(&bytes).unwrap();
+    let limits = InputLimits {
+        max_entry_bytes: 4096,
+        ..Default::default()
+    };
+    assert!(parse_document_strict_with_limits(&bytes, &limits).is_err());
+    let mut damaged = bytes;
+    let descriptor = damaged
+        .windows(4)
+        .position(|bytes| bytes == b"PK\x07\x08")
+        .unwrap();
+    damaged[descriptor + 4] ^= 1;
+    rejected(&damaged);
 }
 
 #[test]

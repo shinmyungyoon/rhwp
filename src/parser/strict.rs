@@ -281,7 +281,29 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
         {
             return Err(invalid("inconsistent ZIP local sizes or checksum"));
         }
-        ranges.push((local, payload_end));
+        let entry_end = if flags & 8 != 0 {
+            let descriptor =
+                if data.get(payload_end..payload_end.saturating_add(4)) == Some(b"PK\x07\x08") {
+                    payload_end.checked_add(4)
+                } else {
+                    Some(payload_end)
+                }
+                .ok_or_else(|| invalid("ZIP descriptor offset overflow"))?;
+            let end = descriptor
+                .checked_add(12)
+                .filter(|end| *end <= central_start as usize)
+                .ok_or_else(|| invalid("truncated ZIP data descriptor"))?;
+            if u32_at(data, descriptor)? != u32_at(data, at + 16)?
+                || u32_at(data, descriptor + 4)? != compressed
+                || u32_at(data, descriptor + 8)? != expanded
+            {
+                return Err(invalid("inconsistent ZIP data descriptor"));
+            }
+            end
+        } else {
+            payload_end
+        };
+        ranges.push((local, entry_end));
         entries.push(ZipEntry { name, expanded });
         at = end;
     }
@@ -600,6 +622,9 @@ fn records(
         }
         if first && (tag != first_tag || level != 0) {
             return Err(invalid("unexpected first HWP record"));
+        }
+        if !first && first_tag == tags::HWPTAG_DOCUMENT_PROPERTIES && tag == first_tag {
+            return Err(invalid("duplicate HWP document properties"));
         }
         if first_tag == tags::HWPTAG_DOCUMENT_PROPERTIES && tag == tags::HWPTAG_ID_MAPPINGS {
             if mappings {
