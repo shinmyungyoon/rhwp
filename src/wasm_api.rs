@@ -441,6 +441,17 @@ impl HwpDocument {
         DocumentCore::from_bytes(data).map(|core| HwpDocument { core })
     }
 
+    pub fn from_bytes_strict(data: &[u8]) -> Result<HwpDocument, HwpError> {
+        DocumentCore::from_bytes_strict(data).map(|core| HwpDocument { core })
+    }
+
+    pub fn from_bytes_strict_with_limits(
+        data: &[u8],
+        limits: &crate::parser::InputLimits,
+    ) -> Result<HwpDocument, HwpError> {
+        DocumentCore::from_bytes_strict_with_limits(data, limits).map(|core| HwpDocument { core })
+    }
+
     pub fn from_bytes_with_password(data: &[u8], password: &[u8]) -> Result<HwpDocument, HwpError> {
         DocumentCore::from_bytes_with_password(data, password).map(|core| HwpDocument { core })
     }
@@ -590,6 +601,12 @@ impl HwpDocument {
         DocumentCore::from_bytes(data)
             .map(|core| HwpDocument { core })
             .map_err(|e| e.into())
+    }
+
+    /// Load an unencrypted HWP 5 or HWPX document without input recovery.
+    #[wasm_bindgen(js_name = openStrict)]
+    pub fn open_strict(data: &[u8]) -> Result<HwpDocument, JsValue> {
+        Self::from_bytes_strict(data).map_err(|error| error.into())
     }
 
     /// 비밀번호로 보호된 HWP/HWPX 파일을 비밀번호와 함께 로드한다.

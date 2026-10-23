@@ -161,6 +161,7 @@ fn strict_input_valid_synthetic_documents_load_through_public_apis() {
         assert_eq!(document.sections.len(), 1);
         assert_eq!(document.sections[0].paragraphs[0].text.trim_end(), "Sample");
         DocumentCore::from_bytes_strict(&bytes).unwrap();
+        rhwp::HwpDocument::from_bytes_strict(&bytes).unwrap();
         assert_eq!(bytes, original);
         let saved = rhwp::serializer::hwpx::serialize_hwpx(&document).unwrap();
         assert_eq!(parse_document_strict(&saved).unwrap().sections.len(), 1);
@@ -334,6 +335,15 @@ fn strict_input_rejects_truncated_and_short_hwp_records() {
     let mut damaged = body();
     damaged.extend_from_slice(&((100u32 << 20) | 67).to_le_bytes());
     rejected(&hwp(&damaged, false, &[]));
+}
+
+#[test]
+fn strict_input_does_not_use_permissive_cfb_header_recovery() {
+    let mut bytes = hwp(&body(), false, &[]);
+    assert_eq!(u16::from_le_bytes([bytes[26], bytes[27]]), 3);
+    bytes[40..44].copy_from_slice(&1u32.to_le_bytes());
+    assert!(parse_document(&bytes).is_ok());
+    rejected(&bytes);
 }
 
 #[test]

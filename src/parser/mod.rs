@@ -2211,7 +2211,7 @@ fn load_bin_data_content(
     }
 
     let resolver: Option<std::sync::Arc<dyn crate::model::bin_data::BinDataResolver>> =
-        match cfb_reader::CfbReader::open(data) {
+        match cfb.reopen(data) {
             Ok(reader) => Some(std::sync::Arc::new(Hwp5BinResolver {
                 cfb: std::sync::Mutex::new(reader),
                 ole_streams,

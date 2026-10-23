@@ -12,6 +12,7 @@ use std::io::{Cursor, Read};
 /// CFB 컨테이너 리더
 pub struct CfbReader {
     compound: cfb::CompoundFile<Cursor<Vec<u8>>>,
+    strict: bool,
 }
 
 /// CFB 리더 에러
@@ -50,7 +51,10 @@ impl CfbReader {
     pub fn open_strict(data: &[u8]) -> Result<Self, CfbError> {
         let compound = cfb::CompoundFile::open_strict(Cursor::new(data.to_vec()))
             .map_err(|error| CfbError::OpenError(error.to_string()))?;
-        Ok(Self { compound })
+        Ok(Self {
+            compound,
+            strict: true,
+        })
     }
 
     /// 바이트 데이터에서 CFB 컨테이너 열기
@@ -59,7 +63,18 @@ impl CfbReader {
         let compound =
             cfb::CompoundFile::open(cursor).map_err(|e| CfbError::OpenError(e.to_string()))?;
 
-        Ok(CfbReader { compound })
+        Ok(CfbReader {
+            compound,
+            strict: false,
+        })
+    }
+
+    pub(crate) fn reopen(&self, data: &[u8]) -> Result<Self, CfbError> {
+        if self.strict {
+            Self::open_strict(data)
+        } else {
+            Self::open(data)
+        }
     }
 
     /// 스트림 존재 여부 확인

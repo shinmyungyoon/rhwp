@@ -86,6 +86,13 @@ pub fn parse_document_strict_with_limits(
     } else {
         return Err(StrictParseError::Unsupported("this file format"));
     };
+    if document.sections.iter().any(|section| {
+        section.paragraphs.iter().any(|paragraph| {
+            paragraph.line_segs.len() > paragraph.text.chars().count().saturating_add(64)
+        })
+    }) {
+        return Err(invalid("inconsistent paragraph line segment count"));
+    }
     document
         .doc_info
         .seal_raw_provenance(&document.doc_properties);
@@ -388,6 +395,9 @@ fn core_xml(document: &roxmltree::Document<'_>) -> Result<(), StrictParseError> 
 
 fn parse_hwpx(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseError> {
     let entries = zip_directory(data, limits)?;
+    if !entries.iter().any(|entry| entry.name == "mimetype") {
+        return Err(invalid("missing HWPX media type"));
+    }
     let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(invalid)?;
     if archive.len() != entries.len() {
         return Err(invalid("inconsistent ZIP entry count"));
@@ -543,6 +553,7 @@ fn records(
     let mut at = 0usize;
     let mut previous_depth = 0usize;
     let mut first = true;
+    let mut mappings = false;
     while at < data.len() {
         let value = u32_at(data, at).map_err(|_| invalid("truncated HWP record header"))?;
         let tag = (value & 0x3ff) as u16;
@@ -555,6 +566,12 @@ fn records(
         }
         if first && (tag != first_tag || level != 0) {
             return Err(invalid("unexpected first HWP record"));
+        }
+        if first_tag == tags::HWPTAG_DOCUMENT_PROPERTIES && tag == tags::HWPTAG_ID_MAPPINGS {
+            if mappings {
+                return Err(invalid("duplicate HWP ID mappings"));
+            }
+            mappings = true;
         }
         if level > limits.max_record_depth.min(63) || level > previous_depth + 1 {
             return Err(StrictParseError::LimitExceeded("HWP record depth"));
@@ -578,15 +595,45 @@ fn records(
         if bad_size {
             return Err(invalid("invalid HWP record payload size"));
         }
-        at = at
+        let end = at
             .checked_add(size)
             .filter(|end| *end <= data.len())
             .ok_or_else(|| invalid("truncated HWP record payload"))?;
+        if tag == tags::HWPTAG_PARA_TEXT {
+            hwp_text(&data[at..end])?;
+        }
+        at = end;
         previous_depth = level;
         first = false;
     }
     if first {
         return Err(invalid("empty HWP record stream"));
+    }
+    if first_tag == tags::HWPTAG_DOCUMENT_PROPERTIES && !mappings {
+        return Err(invalid("missing HWP ID mappings"));
+    }
+    Ok(())
+}
+
+fn hwp_text(data: &[u8]) -> Result<(), StrictParseError> {
+    let mut at = 0usize;
+    while at < data.len() {
+        let unit = u16_at(data, at)?;
+        if matches!(unit, 1..=9 | 11..=12 | 14..=23) {
+            if at + 16 > data.len() || u16_at(data, at + 14)? != unit {
+                return Err(invalid("truncated or unmatched HWP text control"));
+            }
+            at += 16;
+        } else if (0xd800..=0xdbff).contains(&unit) {
+            if at + 4 > data.len() || !(0xdc00..=0xdfff).contains(&u16_at(data, at + 2)?) {
+                return Err(invalid("unpaired HWP UTF-16 surrogate"));
+            }
+            at += 4;
+        } else if (0xdc00..=0xdfff).contains(&unit) {
+            return Err(invalid("unpaired HWP UTF-16 surrogate"));
+        } else {
+            at += 2;
+        }
     }
     Ok(())
 }
