@@ -139,15 +139,24 @@ impl Budget {
 }
 
 fn safe_name(name: &str, directory: bool) -> Result<(), StrictParseError> {
+    safe_raw_name(name.as_bytes(), directory)?;
+    if name.chars().any(char::is_control) {
+        return Err(invalid("unsafe package entry name"));
+    }
+    Ok(())
+}
+
+fn safe_raw_name(name: &[u8], directory: bool) -> Result<(), StrictParseError> {
     let path = if directory {
-        name.strip_suffix('/').unwrap_or(name)
+        name.strip_suffix(b"/").unwrap_or(name)
     } else {
         name
     };
     if path.is_empty()
-        || path.contains(['\\', ':', '\0'])
-        || path.chars().any(char::is_control)
-        || path.split('/').any(|part| matches!(part, "" | "." | ".."))
+        || path.iter().any(|byte| matches!(*byte, b'\\' | b':' | 0))
+        || path
+            .split(|byte| *byte == b'/')
+            .any(|part| matches!(part, b"" | b"." | b".."))
     {
         return Err(invalid("unsafe package entry name"));
     }
@@ -250,10 +259,11 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
             return Err(invalid("truncated ZIP entry"));
         }
         let raw_name = &data[at + 46..at + 46 + name_length];
-        let name = std::str::from_utf8(raw_name).map_err(invalid)?.to_string();
-        safe_name(&name, name.ends_with('/'))?;
-        // Names that differ only by directory markers alias the same path.
-        if !names.insert(name.trim_end_matches('/').to_string()) {
+        safe_raw_name(raw_name, raw_name.ends_with(b"/"))?;
+        if flags & 0x800 != 0 {
+            std::str::from_utf8(raw_name).map_err(invalid)?;
+        }
+        if !names.insert(raw_name.to_vec()) {
             return Err(invalid("duplicate ZIP entry name"));
         }
         let local = local as usize;
@@ -311,7 +321,7 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
         };
         ranges.push((local, entry_end));
         entries.push(ZipEntry {
-            name,
+            name: String::new(),
             expanded,
             method,
             payload: payload..payload_end,
@@ -325,12 +335,39 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
     if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
         return Err(invalid("overlapping ZIP entries"));
     }
+    Ok(entries)
+}
+
+trait DecodedZipName {
+    fn checked_name(self) -> Result<String, StrictParseError>;
+}
+
+impl DecodedZipName for &str {
+    fn checked_name(self) -> Result<String, StrictParseError> {
+        Ok(self.to_string())
+    }
+}
+
+impl<'a, E: std::fmt::Display> DecodedZipName for Result<std::borrow::Cow<'a, str>, E> {
+    fn checked_name(self) -> Result<String, StrictParseError> {
+        self.map(std::borrow::Cow::into_owned).map_err(invalid)
+    }
+}
+
+fn package_names(entries: &[ZipEntry]) -> Result<(), StrictParseError> {
+    let mut names = HashSet::new();
+    for entry in entries {
+        safe_name(&entry.name, entry.name.ends_with('/'))?;
+        if !names.insert(entry.name.trim_end_matches('/')) {
+            return Err(invalid("duplicate decoded ZIP entry name"));
+        }
+    }
     let files: HashSet<_> = entries
         .iter()
         .filter(|entry| !entry.name.ends_with('/'))
         .map(|entry| entry.name.as_str())
         .collect();
-    for entry in &entries {
+    for entry in entries {
         let mut prefix = entry.name.as_str();
         while let Some((parent, _)) = prefix.rsplit_once('/') {
             if files.contains(parent) {
@@ -339,7 +376,7 @@ fn zip_directory(data: &[u8], limits: &InputLimits) -> Result<Vec<ZipEntry>, Str
             prefix = parent;
         }
     }
-    Ok(entries)
+    Ok(())
 }
 
 const OPF_NS: &str = "http://www.idpf.org/2007/opf/";
@@ -461,20 +498,30 @@ fn core_xml(document: &roxmltree::Document<'_>) -> Result<(), StrictParseError> 
 }
 
 fn parse_hwpx(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseError> {
-    let entries = zip_directory(data, limits)?;
-    if !entries.iter().any(|entry| entry.name == "mimetype") {
-        return Err(invalid("missing HWPX media type"));
-    }
+    let mut entries = zip_directory(data, limits)?;
     let mut archive = zip::ZipArchive::new(Cursor::new(data)).map_err(invalid)?;
     if archive.len() != entries.len() {
         return Err(invalid("inconsistent ZIP entry count"));
+    }
+    // Use the ZIP reader's encoding rules, but keep index-based reads so that
+    // CP437 names do not need a UTF-8-to-raw lookup round trip.
+    for (index, entry) in entries.iter_mut().enumerate() {
+        entry.name = archive
+            .by_index(index)
+            .map_err(invalid)?
+            .name()
+            .checked_name()?;
+    }
+    package_names(&entries)?;
+    if !entries.iter().any(|entry| entry.name == "mimetype") {
+        return Err(invalid("missing HWPX media type"));
     }
     let mut budget = Budget::new(limits);
     let mut manifest = None;
     let mut section_count = None;
     let mut xml_roots = HashMap::new();
-    for entry in &entries {
-        let mut file = archive.by_name(&entry.name).map_err(invalid)?;
+    for (index, entry) in entries.iter().enumerate() {
+        let mut file = archive.by_index(index).map_err(invalid)?;
         let allowance = budget.bytes.min(limits.max_entry_bytes);
         if u64::from(entry.expanded) > allowance as u64 {
             return Err(StrictParseError::LimitExceeded("expanded bytes"));

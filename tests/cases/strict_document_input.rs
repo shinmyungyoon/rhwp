@@ -77,6 +77,21 @@ fn hwpx_with(header: &[u8], section: &[u8], extra: &[(&str, &[u8])]) -> Vec<u8> 
     zip(&entries)
 }
 
+fn cp437_resource_name(mut bytes: Vec<u8>) -> Vec<u8> {
+    let positions: Vec<_> = bytes
+        .windows(b"BinData/x.bin".len())
+        .enumerate()
+        .filter_map(|(at, name)| (name == b"BinData/x.bin").then_some(at))
+        .collect();
+    assert_eq!(positions.len(), 2);
+    for at in &positions {
+        bytes[*at + 8] = 0x82;
+    }
+    bytes[positions[0] - 23] &= !8;
+    bytes[positions[1] - 37] &= !8;
+    bytes
+}
+
 fn hwpx() -> Vec<u8> {
     let document = rhwp::model::document::Document {
         doc_info: doc_info(),
@@ -268,6 +283,18 @@ fn strict_input_checks_opaque_zip_entries_and_safe_names() {
         &[("BinData/한글.bin", b"data")],
     ))
     .unwrap();
+    let bytes = cp437_resource_name(hwpx_with(
+        HEADER.as_bytes(),
+        SECTION.as_bytes(),
+        &[("BinData/x.bin", b"data")],
+    ));
+    parse_document_strict(&bytes).unwrap();
+    let aliases = cp437_resource_name(hwpx_with(
+        HEADER.as_bytes(),
+        SECTION.as_bytes(),
+        &[("BinData/x.bin", b"one"), ("BinData/é.bin", b"two")],
+    ));
+    rejected(&aliases);
     let mut bytes = hwpx_with(
         HEADER.as_bytes(),
         SECTION.as_bytes(),
@@ -427,13 +454,23 @@ fn strict_input_rejects_truncated_and_short_hwp_records() {
         rejected(&hwp(&damaged, false, &[]));
     }
     let mut oversized = body();
+    let mut segments = [0u8; 36 * 71];
+    for segment in segments.chunks_exact_mut(36) {
+        segment[8..12].copy_from_slice(&1000i32.to_le_bytes());
+        segment[12..16].copy_from_slice(&1000i32.to_le_bytes());
+    }
     oversized.extend(record(
         rhwp::parser::tags::HWPTAG_PARA_LINE_SEG,
         1,
-        &[0; 36 * 71],
+        &segments,
     ));
     let bytes = hwp(&oversized, false, &[]);
-    assert!(parse_document(&bytes).is_ok());
+    assert_eq!(
+        parse_document(&bytes).unwrap().sections[0].paragraphs[0]
+            .line_segs
+            .len(),
+        71
+    );
     rejected(&bytes);
 }
 
