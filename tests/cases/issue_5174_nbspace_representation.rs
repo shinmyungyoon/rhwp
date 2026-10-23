@@ -42,7 +42,7 @@ fn section_xml(bytes: &[u8]) -> String {
     let mut out = String::new();
     for i in 0..zin.len() {
         let mut f = zin.by_index(i).expect("zip 항목");
-        let name = f.name().to_string();
+        let name = f.name().expect("valid ZIP entry name").into_owned();
         if name.starts_with("Contents/section") && name.ends_with(".xml") {
             let mut s = String::new();
             f.read_to_string(&mut s).expect("section xml 읽기");

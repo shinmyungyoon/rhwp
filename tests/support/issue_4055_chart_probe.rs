@@ -282,7 +282,13 @@ pub(super) fn append_hwpx_entries(original: &[u8], additions: &[(String, Vec<u8>
     let mut src =
         zip::ZipArchive::new(std::io::Cursor::new(original.to_vec())).expect("원본 HWPX 열기");
     let existing: Vec<String> = (0..src.len())
-        .map(|i| src.by_index(i).expect("zip 엔트리").name().to_string())
+        .map(|i| {
+            src.by_index(i)
+                .expect("zip 엔트리")
+                .name()
+                .expect("valid ZIP entry name")
+                .into_owned()
+        })
         .collect();
     for (name, _) in additions {
         assert!(

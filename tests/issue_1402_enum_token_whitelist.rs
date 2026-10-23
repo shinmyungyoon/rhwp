@@ -126,7 +126,7 @@ fn all_section_xml(doc: &rhwp::model::document::Document) -> String {
     let mut xml = String::new();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).unwrap();
-        let name = f.name().to_string();
+        let name = f.name().expect("valid ZIP entry name").into_owned();
         if name.contains("Contents/") && name.ends_with(".xml") {
             use std::io::Read;
             let mut s = String::new();
@@ -198,7 +198,8 @@ fn numtype_figure_regression_guard() {
             if let Ok(mut zip) = zip::ZipArchive::new(reader) {
                 for i in 0..zip.len() {
                     let mut f = zip.by_index(i).unwrap();
-                    if f.name().contains("Contents/") && f.name().ends_with(".xml") {
+                    let name = f.name().expect("valid ZIP entry name");
+                    if name.contains("Contents/") && name.ends_with(".xml") {
                         use std::io::Read;
                         let mut s = String::new();
                         f.read_to_string(&mut s).ok();

@@ -50,7 +50,11 @@ fn section_xml(build: impl FnOnce(&mut rhwp::model::document::Document)) -> Stri
     let mut out = String::new();
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("zip 항목");
-        if f.name().to_ascii_lowercase().contains("section0") {
+        if f.name()
+            .expect("valid ZIP entry name")
+            .to_ascii_lowercase()
+            .contains("section0")
+        {
             use std::io::Read;
             f.read_to_string(&mut out).expect("section0 읽기");
             break;

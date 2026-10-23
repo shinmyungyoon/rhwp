@@ -66,7 +66,8 @@ fn extract_arc_type_attr(hwpx_bytes: &[u8]) -> Option<String> {
     use std::io::Read;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).ok()?;
-        if !f.name().ends_with(".xml") || !f.name().contains("section") {
+        let name = f.name().ok()?;
+        if !name.ends_with(".xml") || !name.contains("section") {
             continue;
         }
         let mut xml = String::new();
