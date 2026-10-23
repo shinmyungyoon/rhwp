@@ -426,6 +426,15 @@ fn strict_input_rejects_truncated_and_short_hwp_records() {
         damaged.extend(record(rhwp::parser::tags::HWPTAG_PARA_TEXT, 1, text));
         rejected(&hwp(&damaged, false, &[]));
     }
+    let mut oversized = body();
+    oversized.extend(record(
+        rhwp::parser::tags::HWPTAG_PARA_LINE_SEG,
+        1,
+        &[0; 36 * 71],
+    ));
+    let bytes = hwp(&oversized, false, &[]);
+    assert!(parse_document(&bytes).is_ok());
+    rejected(&bytes);
 }
 
 #[test]
