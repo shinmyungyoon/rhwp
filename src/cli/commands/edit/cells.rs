@@ -401,6 +401,7 @@ pub(super) fn edit_set_cell(args: &[String]) -> i32 {
         format!("{}_cell.{}", stem, out_format.ext())
     });
 
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -429,11 +430,12 @@ pub(super) fn edit_set_cell(args: &[String]) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
     // [#3712] 눈검증 대상 페이지 — 표 호스트 문단이 걸친 쪽 전부(분할 표 포함).
-    let changed_pages = if dry_run {
+    let changed_pages = if !wrote_output {
         serde_json::Value::Null
     } else {
         match doc.pages_covering_paragraphs(&[(sec, para)]) {
@@ -456,9 +458,11 @@ pub(super) fn edit_set_cell(args: &[String]) -> i32 {
             "keepStyle": keep_style,
             "overflow": overflow.clone().map(|o| vec![o]).unwrap_or_default(),
         });
-        if !dry_run {
+        if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         println!("{}", provenance::marked(envelope, "edit"));

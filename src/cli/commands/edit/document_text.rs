@@ -143,6 +143,7 @@ pub(super) fn edit_insert_text(args: &[String]) -> i32 {
         format!("{}_inserted.{}", stem, out_format.ext())
     });
 
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -171,10 +172,11 @@ pub(super) fn edit_insert_text(args: &[String]) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
-    let changed_pages = if dry_run {
+    let changed_pages = if !wrote_output {
         serde_json::Value::Null
     } else {
         match doc.pages_covering_paragraphs(&[(sec, para)]) {
@@ -196,9 +198,11 @@ pub(super) fn edit_insert_text(args: &[String]) -> i32 {
             "dryRun": dry_run,
             "changedPages": changed_pages,
         });
-        if !dry_run {
+        if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         // 삽입 문자열은 호출자 인자이지 문서 유래가 아니다 — 표지는 항상 싣되

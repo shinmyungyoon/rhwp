@@ -164,10 +164,10 @@ pub(super) fn edit_replace_text(args: &[String]) -> i32 {
     });
 
     // 0건이면 무변경이다 — 산출물을 만들지 않는다 (dry-run 과 동일하게 파일 경로를 타지 않음).
-    let wrote_output = !dry_run && replaced_count > 0;
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
-    if wrote_output {
+    if !dry_run && replaced_count > 0 {
         let out_bytes = match edit_serialize(&mut doc, out_format) {
             Ok(b) => b,
             Err(e) => {
@@ -207,6 +207,7 @@ pub(super) fn edit_replace_text(args: &[String]) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
@@ -235,6 +236,8 @@ pub(super) fn edit_replace_text(args: &[String]) -> i32 {
         if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         println!("{}", provenance::marked(envelope, "edit"));

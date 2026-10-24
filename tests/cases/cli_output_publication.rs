@@ -60,6 +60,177 @@ fn run(args: &[&str]) -> Output {
     Command::new(executable).args(args).output().unwrap()
 }
 
+fn redaction_hwpx(text: &str, empty_tail: bool) -> Vec<u8> {
+    let original = synthetic_hwpx(false);
+    let mut source = zip::ZipArchive::new(Cursor::new(original)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..source.len() {
+        let mut entry = source.by_index(index).unwrap();
+        let name = entry.name().to_string();
+        let mut contents = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
+        if name == "Contents/section0.xml" {
+            contents = contents.replace("원본 문장", text);
+        }
+        if empty_tail && name == "Contents/header.xml" {
+            contents = contents.replace("secCnt=\"1\"", "secCnt=\"2\"");
+        }
+        if empty_tail && name == "Contents/content.hpf" {
+            contents = contents.replace(
+                "</opf:manifest>",
+                "<opf:item id=\"section1\" href=\"Contents/section1.xml\" media-type=\"application/xml\"/></opf:manifest>",
+            );
+            contents = contents.replace(
+                "</opf:spine>",
+                "<opf:itemref idref=\"section1\"/></opf:spine>",
+            );
+        }
+        output
+            .start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(contents.as_bytes()).unwrap();
+    }
+    if empty_tail {
+        output
+            .start_file(
+                "Contents/section1.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        output
+            .write_all(br#"<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"/>"#)
+            .unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+#[test]
+fn failed_redaction_verification_reports_no_published_output() {
+    let directory = TestDirectory::new();
+    let source = directory.0.join("source.hwpx");
+    let output = directory.0.join("output.hwpx");
+    let original = redaction_hwpx("person@example.com", true);
+    fs::write(&source, &original).unwrap();
+    fs::write(&output, b"existing output").unwrap();
+    for json_mode in [true, false] {
+        let mut args = vec![
+            "edit",
+            "redact",
+            source.to_str().unwrap(),
+            "--kind",
+            "email",
+            "--verify",
+            "-o",
+            output.to_str().unwrap(),
+        ];
+        if json_mode {
+            args.push("--json");
+        }
+        let result = run(&args);
+        assert_eq!(result.status.code(), Some(3), "{result:?}");
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert_eq!(fs::read(&output).unwrap(), b"existing output");
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("마스킹 완료"));
+        if json_mode {
+            let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(report["redactedCount"], 1);
+            assert!(report["changedPages"].is_null(), "{report}");
+            assert!(report.get("output").is_none(), "{report}");
+            assert!(report.get("outputFormat").is_none(), "{report}");
+            assert_eq!(report["verify"]["identical"], false);
+            assert!(report["verify"]["diffCount"].as_u64().unwrap() > 0);
+        } else {
+            assert!(String::from_utf8_lossy(&result.stderr).contains("검증 실패"));
+        }
+    }
+    assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
+}
+
+#[test]
+fn redaction_publication_controls_report_only_successful_saves() {
+    for (text, dry_run, publishes) in [
+        ("person@example.com", false, true),
+        ("no sensitive content", false, false),
+        ("person@example.com", true, false),
+    ] {
+        let directory = TestDirectory::new();
+        let source = directory.0.join("source.hwpx");
+        let output = directory.0.join("output.hwpx");
+        let original = redaction_hwpx(text, false);
+        fs::write(&source, &original).unwrap();
+        fs::write(&output, b"existing output").unwrap();
+        let mut args = vec![
+            "edit",
+            "redact",
+            source.to_str().unwrap(),
+            "--kind",
+            "email",
+            "--verify",
+            "--json",
+            "-o",
+            output.to_str().unwrap(),
+        ];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let result = run(&args);
+        assert!(result.status.success(), "{result:?}");
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert_eq!(report.get("output").is_some(), publishes, "{report}");
+        assert_eq!(report.get("outputFormat").is_some(), publishes, "{report}");
+        if publishes {
+            assert_eq!(report["verify"]["identical"], true);
+            assert!(!report["changedPages"].is_null(), "{report}");
+            let reopened = run(&["export-text", output.to_str().unwrap(), "--json"]);
+            assert!(reopened.status.success(), "{reopened:?}");
+            assert!(!String::from_utf8_lossy(&reopened.stdout).contains(text));
+        } else {
+            assert_eq!(fs::read(&output).unwrap(), b"existing output");
+            assert!(report["changedPages"].is_null(), "{report}");
+            assert!(report.get("verify").is_none(), "{report}");
+        }
+    }
+}
+
+#[test]
+fn failed_text_edit_verification_reports_no_published_output() {
+    let directory = TestDirectory::new();
+    let source = directory.0.join("source.hwpx");
+    let output = directory.0.join("output.hwpx");
+    let original = redaction_hwpx("person@example.com", true);
+    fs::write(&source, &original).unwrap();
+    for edit in [
+        vec!["replace-text", "--find", "person", "--replace", "reader"],
+        vec![
+            "insert-text",
+            "--section",
+            "0",
+            "--para",
+            "0",
+            "--offset",
+            "0",
+            "--text",
+            "new ",
+        ],
+        vec!["insert-paragraph", "--section", "0", "--para", "0"],
+    ] {
+        fs::write(&output, b"existing output").unwrap();
+        let mut args = vec!["edit", edit[0], source.to_str().unwrap()];
+        args.extend_from_slice(&edit[1..]);
+        args.extend_from_slice(&["-o", output.to_str().unwrap(), "--verify", "--json"]);
+        let result = run(&args);
+        assert_eq!(result.status.code(), Some(3), "{result:?}");
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(report["changedPages"].is_null(), "{report}");
+        assert!(report.get("output").is_none(), "{report}");
+        assert!(report.get("outputFormat").is_none(), "{report}");
+        assert_eq!(report["verify"]["identical"], false);
+        assert_eq!(fs::read(&output).unwrap(), b"existing output");
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+}
+
 #[cfg(unix)]
 fn operations(input: &Path, output: &Path) -> Vec<Vec<String>> {
     let is_hwp = output.extension().and_then(|extension| extension.to_str()) == Some("hwp");
@@ -141,6 +312,9 @@ fn rejected_conversion_verification_preserves_existing_output_and_source() {
     assert_eq!(fs::read(&output).unwrap(), b"existing output");
     let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(report["verify"]["identical"], false);
+    assert_eq!(report["bytes"], 0);
+    assert!(report.get("output").is_none(), "{report}");
+    assert!(report.get("format").is_none(), "{report}");
     assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
 }
 

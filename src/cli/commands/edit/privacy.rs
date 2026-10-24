@@ -249,10 +249,10 @@ fn execute_redact(args: RedactArgs<'_>) -> i32 {
     };
 
     // 탐지 0건이면 무변경이다 — 산출물을 만들지 않는다(원본을 그대로 두는 편이 안전하다).
-    let wrote_output = !dry_run && redacted_count > 0;
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
-    if wrote_output {
+    if !dry_run && redacted_count > 0 {
         let out_bytes = match edit_serialize(&mut doc, out_format) {
             Ok(b) => b,
             Err(e) => {
@@ -276,6 +276,7 @@ fn execute_redact(args: RedactArgs<'_>) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
@@ -322,6 +323,8 @@ fn execute_redact(args: RedactArgs<'_>) -> i32 {
         if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         // [#3885] findings[].raw 는 마스킹 전 원문 — 개인정보 그 자체다. 가장 민감한

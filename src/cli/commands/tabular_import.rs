@@ -375,6 +375,7 @@ pub(crate) fn csv_to_table(args: &[String]) -> i32 {
         format!("{}_csv.{}", stem, out_format.ext())
     });
 
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -403,11 +404,12 @@ pub(crate) fn csv_to_table(args: &[String]) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
     // 눈검증 대상 쪽 — 표 호스트 문단이 걸친 쪽 전부(분할 표 포함, #3712).
-    let changed_pages = if dry_run {
+    let changed_pages = if !wrote_output {
         serde_json::Value::Null
     } else {
         match doc.pages_covering_paragraphs(&[(host_section, host_paragraph)]) {
@@ -430,9 +432,11 @@ pub(crate) fn csv_to_table(args: &[String]) -> i32 {
             "dryRun": dry_run,
             "changedPages": changed_pages,
         });
-        if !dry_run {
+        if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         println!("{}", provenance::marked(envelope, "csv-to-table"));
@@ -451,7 +455,7 @@ pub(crate) fn csv_to_table(args: &[String]) -> i32 {
             cols,
             changed.len()
         );
-    } else {
+    } else if wrote_output {
         println!(
             "표 기록 완료: {} → {} — 표{} {}행×{}열 중 {}칸",
             file_path,
@@ -675,6 +679,7 @@ pub(crate) fn csv_to_chart(args: &[String]) -> i32 {
         format!("{}_chart.{}", stem, out_format.ext())
     });
 
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -703,6 +708,7 @@ pub(crate) fn csv_to_chart(args: &[String]) -> i32 {
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
 
@@ -719,9 +725,11 @@ pub(crate) fn csv_to_chart(args: &[String]) -> i32 {
             "dryRun": dry_run,
             "changedPages": serde_json::Value::Null,
         });
-        if !dry_run {
+        if wrote_output {
             envelope["output"] = serde_json::Value::String(output_path.clone());
             envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             envelope["verify"] = verify_report.clone();
         }
         println!("{}", provenance::marked(envelope, "csv-to-chart"));
@@ -736,7 +744,7 @@ pub(crate) fn csv_to_chart(args: &[String]) -> i32 {
             "변경 예정: {} 차트{} — {}칸",
             file_path, chart_no, changed_count
         );
-    } else {
+    } else if wrote_output {
         println!(
             "차트 기록 완료: {} → {} — 차트{} {}칸 ({})",
             file_path,

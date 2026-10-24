@@ -214,6 +214,7 @@ pub(crate) fn finish_edit_write(
             .unwrap_or_else(|| "output".to_string());
         format!("{}_{}.{}", stem, suffix, out_format.ext())
     });
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -242,9 +243,10 @@ pub(crate) fn finish_edit_write(
                 eprintln!("오류: 출력 쓰기 실패 - {}: {}", output_path, e);
                 return EXIT_RUNTIME;
             }
+            wrote_output = true;
         }
     }
-    let changed_pages = if dry_run {
+    let changed_pages = if !wrote_output {
         serde_json::Value::Null
     } else {
         match doc.pages_covering_paragraphs(changed_paras) {
@@ -257,9 +259,11 @@ pub(crate) fn finish_edit_write(
         extra["source"] = serde_json::json!(file_path);
         extra["dryRun"] = serde_json::json!(dry_run);
         extra["changedPages"] = changed_pages;
-        if !dry_run {
+        if wrote_output {
             extra["output"] = serde_json::Value::String(output_path.clone());
             extra["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+        }
+        if wrote_output || verify_failed {
             extra["verify"] = verify_report;
         }
         println!("{}", provenance::marked(extra, "edit"));

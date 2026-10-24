@@ -280,26 +280,25 @@ pub(crate) fn convert_hwp(args: &[String]) -> i32 {
 
     // 직렬화
     // [#3605] JSON 봉투 — export-hwpx(#3596)와 같은 "판정은 데이터" 규약.
-    let emit_envelope =
-        |bytes_len: usize, verify: serde_json::Value, verify_pages: serde_json::Value| {
-            println!(
-                "{}",
-                provenance::marked(
-                    serde_json::json!({
-                        "schemaVersion": ENVELOPE_SCHEMA_VERSION,
-                        "source": input_path,
-                        "output": output_path,
-                        "format": "hwp5",
-                        "bytes": bytes_len,
-                        "wasDistribution": was_distribution,
-                        "passwordProtected": output_password.is_some(),
-                        "verify": verify,
-                        "verifyPages": verify_pages,
-                    }),
-                    "convert",
-                )
-            );
-        };
+    let emit_envelope = |wrote_output: bool,
+                         bytes_len: usize,
+                         verify: serde_json::Value,
+                         verify_pages: serde_json::Value| {
+        let mut envelope = serde_json::json!({
+            "schemaVersion": ENVELOPE_SCHEMA_VERSION,
+            "source": input_path,
+            "bytes": bytes_len,
+            "wasDistribution": was_distribution,
+            "passwordProtected": output_password.is_some(),
+            "verify": verify,
+            "verifyPages": verify_pages,
+        });
+        if wrote_output {
+            envelope["output"] = serde_json::json!(output_path);
+            envelope["format"] = serde_json::json!("hwp5");
+        }
+        println!("{}", provenance::marked(envelope, "convert"));
+    };
     let export_snapshot = doc.prepare_hwp_export_snapshot();
     let verify_expected = verify_options
         .verify
@@ -392,7 +391,7 @@ pub(crate) fn convert_hwp(args: &[String]) -> i32 {
             }
             if exit_code != EXIT_OK {
                 if json_mode {
-                    emit_envelope(0, verify_report, verify_pages_report);
+                    emit_envelope(false, 0, verify_report, verify_pages_report);
                 }
                 return exit_code;
             }
@@ -404,7 +403,12 @@ pub(crate) fn convert_hwp(args: &[String]) -> i32 {
                 .map(|metadata| metadata.len() as usize)
                 .unwrap_or_default();
             if json_mode {
-                emit_envelope(persisted_bytes_len, verify_report, verify_pages_report);
+                emit_envelope(
+                    true,
+                    persisted_bytes_len,
+                    verify_report,
+                    verify_pages_report,
+                );
             } else {
                 println!(
                     "저장 완료: {} ({}KB)",
@@ -490,25 +494,24 @@ pub(crate) fn export_hwpx(args: &[String]) -> i32 {
     // exit 3/4 로 끝난다(ir-diff --json 과 같은 "판정은 데이터" 규약).
     let json_mode = verify_options.json;
     let output_password = cli_output_password();
-    let emit_envelope =
-        |bytes_len: usize, verify: serde_json::Value, verify_pages: serde_json::Value| {
-            println!(
-                "{}",
-                provenance::marked(
-                    serde_json::json!({
-                        "schemaVersion": ENVELOPE_SCHEMA_VERSION,
-                        "source": positionals[0],
-                        "output": output_path.display().to_string(),
-                        "format": "hwpx",
-                        "bytes": bytes_len,
-                        "passwordProtected": output_password.is_some(),
-                        "verify": verify,
-                        "verifyPages": verify_pages,
-                    }),
-                    "export-hwpx",
-                )
-            );
-        };
+    let emit_envelope = |wrote_output: bool,
+                         bytes_len: usize,
+                         verify: serde_json::Value,
+                         verify_pages: serde_json::Value| {
+        let mut envelope = serde_json::json!({
+            "schemaVersion": ENVELOPE_SCHEMA_VERSION,
+            "source": positionals[0],
+            "bytes": bytes_len,
+            "passwordProtected": output_password.is_some(),
+            "verify": verify,
+            "verifyPages": verify_pages,
+        });
+        if wrote_output {
+            envelope["output"] = serde_json::json!(output_path.display().to_string());
+            envelope["format"] = serde_json::json!("hwpx");
+        }
+        println!("{}", provenance::marked(envelope, "export-hwpx"));
+    };
 
     let serialized = match output_password.as_deref() {
         Some(password) => doc.export_hwpx_native_with_password(password.as_bytes()),
@@ -603,7 +606,7 @@ pub(crate) fn export_hwpx(args: &[String]) -> i32 {
             }
             if exit_code != EXIT_OK {
                 if json_mode {
-                    emit_envelope(0, verify_report, verify_pages_report);
+                    emit_envelope(false, 0, verify_report, verify_pages_report);
                 }
                 return exit_code;
             }
@@ -612,7 +615,7 @@ pub(crate) fn export_hwpx(args: &[String]) -> i32 {
                 return EXIT_RUNTIME;
             }
             if json_mode {
-                emit_envelope(bytes.len(), verify_report, verify_pages_report);
+                emit_envelope(true, bytes.len(), verify_report, verify_pages_report);
             } else {
                 println!(
                     "저장 완료: {} ({}KB)",

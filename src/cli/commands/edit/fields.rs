@@ -312,6 +312,7 @@ pub(crate) fn fill_fields_core(
         }
     });
 
+    let mut wrote_output = false;
     let mut verify_report = serde_json::Value::Null;
     let mut verify_failed = false;
     if !dry_run {
@@ -327,11 +328,12 @@ pub(crate) fn fill_fields_core(
         if !verify_failed {
             crate::atomic_file::write_atomically(Path::new(&output_path), &out_bytes)
                 .map_err(|e| format!("출력 쓰기 실패 - {}: {}", output_path, e))?;
+            wrote_output = true;
         }
     }
 
     // [#3712] 눈검증 대상 페이지 — 편집 반영 후 조판 기준. 확정 불가면 null(부분 목록 금지).
-    let changed_pages = if dry_run {
+    let changed_pages = if !wrote_output {
         serde_json::Value::Null
     } else {
         match doc.pages_covering_paragraphs(&changed_paras) {
@@ -351,9 +353,11 @@ pub(crate) fn fill_fields_core(
         "ambiguous": ambiguous,
         "confusable": confusable,
     });
-    if !dry_run {
+    if wrote_output {
         envelope["output"] = serde_json::Value::String(output_path.clone());
         envelope["outputFormat"] = serde_json::Value::String(out_format.label().to_string());
+    }
+    if wrote_output || verify_failed {
         envelope["verify"] = verify_report;
     }
 
