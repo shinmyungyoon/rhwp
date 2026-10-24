@@ -16,6 +16,12 @@ Implemented hardening:
 - Validate HWP checksum trailers and resolve CFB stream names through the
   compound-file reader, including case-equivalent protected stream names.
 - Upgrade ZIP to version 9 and require ctutils 0.4.4 or later.
+- Refresh HWPX preview text from current body paragraphs, including on a
+  no-edit save of stale preview text. Limit the excerpt to 1,000 Unicode
+  scalar values. Preserve thumbnails and opaque resources.
+
+Combined validation of the preview-text update is pending. This excerpt
+excludes tables and text boxes. HWP retains its existing cached-preview policy.
 
 The combined output, strict-input, and dependency changes passed 10,647
 workspace tests on Rust 1.93.1, with 50 existing ignored tests and no failures.

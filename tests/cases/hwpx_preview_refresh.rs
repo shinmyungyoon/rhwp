@@ -85,8 +85,8 @@ fn check_saved_document(bytes: &[u8]) {
     let archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     let resources = archive
         .file_names()
+        .map(|name| name.expect("valid synthetic ZIP entry name").into_owned())
         .filter(|name| name.starts_with("BinData/"))
-        .map(str::to_string)
         .collect::<Vec<_>>();
     assert_eq!(resources.len(), 1);
     assert_eq!(entry(bytes, &resources[0]), RESOURCE);
