@@ -4,18 +4,29 @@ This fork starts from upstream commit
 [`1a76570e833917d15817415a53c09ad61ab3203f`](https://github.com/edwardkim/rhwp/commit/1a76570e833917d15817415a53c09ad61ab3203f),
 tagged `v0.8.7`. The upstream copyright and license notices remain intact.
 
-This batch adds these native CLI safeguards:
+Implemented hardening:
 
 - Run requested output verification before replacing an existing file.
 - Publish through a temporary file and a retained directory handle. Reject
   symbolic-link destinations and parent components.
 - Report output files and changed pages only after a successful write.
   Keep verification errors without reporting an unpublished output as saved.
+- Add opt-in strict HWP 5 and HWPX loading with explicit input limits,
+  container checks, XML validation, and record-framing checks.
+- Validate HWP checksum trailers and resolve CFB stream names through the
+  compound-file reader, including case-equivalent protected stream names.
+- Upgrade ZIP to version 9 and require ctutils 0.4.4 or later.
 
-The matching source and test files passed 10,516 tests on Rust 1.93.1, with
-50 existing skips. The controls apply to the CLI, not to library callers
-that write serialized bytes themselves. They do not provide secure redaction,
-exact layout, or crash-proof durability.
+Each component passed its required checks on Rust 1.93.1.
+Combined-fork validation is in progress.
+The filesystem controls apply to the CLI, not to library callers that write
+serialized bytes themselves.
+Strict input validation is opt-in; the existing recovery APIs remain available.
+Strict mode rejects encrypted or protected files, ZIP64, HWP 3, and HML.
+It does not provide full schema validation, content sanitization, or a limit
+on all model and renderer allocations. Untrusted inputs still require process
+isolation and caller-enforced resource limits.
+These changes do not provide secure redaction, exact layout, or crash-proof durability.
 
 This fork is not yet a distribution-ready Cargo release. Embedded-data
 provenance and the final package contents still require review.
