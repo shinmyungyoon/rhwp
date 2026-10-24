@@ -977,7 +977,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
           shared-key: lint
-          key: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}
+          key: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
@@ -1221,7 +1221,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
           shared-key: native-skia
-          key: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}
+          key: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
@@ -1363,9 +1363,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-frontend-wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-frontend-wasm-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-frontend-wasm-1.93.1-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}-${{ github.sha }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '**/.cargo/config.toml') }}
 
       - name: Build fresh WASM package for frontend gates
         run: wasm-pack build --target web --dev
@@ -1460,14 +1458,14 @@ jobs:
         run: node --test scripts/frontend-font-assets.test.mjs
 
       - name: Save frontend WASM cargo cache
-        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') && steps.frontend_wasm_cargo_cache_restore.outputs.cache-hit != 'true' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main'))) && steps.frontend_wasm_cargo_cache_restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-frontend-wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ steps.frontend_wasm_cargo_cache_restore.outputs.cache-primary-key }}
 
   test-archive-a-shard-1:
     uses: ./.github/workflows/run-nextest-archives.yml
