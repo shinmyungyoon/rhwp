@@ -137,6 +137,7 @@ class NextestArchiveWorkflowTests(unittest.TestCase):
             "test-archive-b-shard-1",
             "test-archive-c-shard-1",
             "test-archive-d-shard-1",
+            "test-archive-d-shard-2",
         ):
             with self.subTest(job=job_name):
                 worker = job_body(self.ci, job_name)
@@ -153,7 +154,10 @@ class NextestArchiveWorkflowTests(unittest.TestCase):
         builder = (root / ".github/workflows/build-nextest-archives.yml").read_text()
         runner = (root / ".github/workflows/run-nextest-archives.yml").read_text()
         self.assertIn("build-test-archive-a:", ci); self.assertIn("build-test-archive-b:", ci); self.assertIn("build-test-archive-c:", ci); self.assertIn("build-test-archive-d:", ci)
-        self.assertNotIn("test-slow-shard:", ci); self.assertNotIn('partition: "hash:1/2"', ci); self.assertNotIn('partition: "hash:2/2"', ci); self.assertEqual(4, ci.count('partition: "hash:1/1"'))
+        self.assertNotIn("test-slow-shard:", ci)
+        self.assertEqual(3, ci.count('partition: "hash:1/1"'))
+        self.assertEqual(1, ci.count('partition: "hash:1/2"'))
+        self.assertEqual(1, ci.count('partition: "hash:2/2"'))
         self.assertIn("target_group: lib", ci); self.assertIn("target_group: integration-b", ci); self.assertIn("target_group: integration-c", ci); self.assertIn("target_group: integration-d", ci)
         self.assertIn("cargo metadata --no-deps --format-version 1", builder)
         self.assertIn("scripts/select-nextest-archive-targets.mjs", builder)
@@ -246,16 +250,79 @@ class NextestArchiveWorkflowTests(unittest.TestCase):
         self.assertIn(archive, self.builder)
         self.assertLess(self.builder.index(prepare), self.builder.index(archive))
 
-    def test_four_workers_validate_each_archive_coverage(self):
+    def test_five_workers_validate_each_archive_coverage(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[2]
         ci = (root / ".github/workflows/ci.yml").read_text()
         builder = (root / ".github/workflows/build-nextest-archives.yml").read_text()
         runner = (root / ".github/workflows/run-nextest-archives.yml").read_text()
-        for name in ("test-archive-a-shard-1:", "test-archive-b-shard-1:", "test-archive-c-shard-1:", "test-archive-d-shard-1:"):
+        for name in ("test-archive-a-shard-1:", "test-archive-b-shard-1:", "test-archive-c-shard-1:", "test-archive-d-shard-1:", "test-archive-d-shard-2:"):
             self.assertIn(name, ci)
         self.assertIn("Archive A shard total mismatch", ci); self.assertIn("Archive B shard total mismatch", ci); self.assertIn("Archive C shard total mismatch", ci); self.assertIn("Archive D shard total mismatch", ci)
         self.assertIn("name: Build & Test", ci)
+
+    def test_archive_d_partitions_are_complementary_and_share_the_complete_archive(self) -> None:
+        aggregate = job_body(self.ci, "build-and-test")
+        for shard in (1, 2):
+            job_name = f"test-archive-d-shard-{shard}"
+            worker = job_body(self.ci, job_name)
+            self.assertIn("uses: ./.github/workflows/run-nextest-archives.yml", worker)
+            self.assertIn("needs: [preflight, build-test-archive-d]", worker)
+            self.assertIn("needs['build-test-archive-d'].result == 'success'", worker)
+            self.assertIn("needs.preflight.outputs.rust_required == 'true'", worker)
+            self.assertIn(f"count_label: d-{shard}", worker)
+            self.assertIn("archive_label: d", worker)
+            self.assertIn('filterset: "all()"', worker)
+            self.assertIn(f'partition: "hash:{shard}/2"', worker)
+            self.assertIn(f"      - {job_name}\n", aggregate)
+        self.assertIn('partition_args=(--partition "${PARTITION}")', self.runner)
+        self.assertIn('"${partition_args[@]}"', self.runner)
+        self.assertIn("--no-tests fail", self.runner)
+
+    def _run_archive_totals(
+        self, d1: str = "7", d2: str = "13", missing: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        step = step_body(self.ci, "Verify archive shard totals")
+        script = "\n".join(
+            line.removeprefix("          ")
+            for line in step.split("        run: |\n", 1)[1].splitlines()
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for archive, count in (("a", "2"), ("b", "3"), ("c", "4"), ("d", "20")):
+                directory = root / f"archive-expected-{archive}"
+                directory.mkdir()
+                (directory / "archive-expected-total.txt").write_text(count + "\n")
+            for label, count in (("a-1", "2"), ("b-1", "3"), ("c-1", "4"),
+                                 ("d-1", d1), ("d-2", d2)):
+                directory = root / f"shard-counts/shard-count-{label}"
+                directory.mkdir(parents=True)
+                if label != missing:
+                    (directory / f"shard-count-{label}.txt").write_text(count + "\n")
+            return subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", script], cwd=root,
+                capture_output=True, text=True, check=False,
+            )
+
+    def test_archive_d_count_validation_adds_both_partitions(self) -> None:
+        accepted = self._run_archive_totals()
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertIn("archive_total=29 shard_total=29", accepted.stdout)
+        for d1, d2 in (("7", "12"), ("7", "14"), ("20", "20"), ("0", "0")):
+            with self.subTest(d1=d1, d2=d2):
+                result = self._run_archive_totals(d1=d1, d2=d2)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("Archive D shard total mismatch", result.stdout)
+
+    def test_archive_d_count_validation_rejects_missing_or_malformed_partition(self) -> None:
+        for missing in ("d-1", "d-2"):
+            with self.subTest(missing=missing):
+                result = self._run_archive_totals(missing=missing)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        for d1, d2 in (("", "13"), ("7", ""), ("bad", "13"), ("7", "-1")):
+            with self.subTest(d1=d1, d2=d2):
+                result = self._run_archive_totals(d1=d1, d2=d2)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_reusable_builder_rejects_profile_timeout_mismatches(self) -> None:
         step = step_body(self.builder, "Validate test archive policy")
