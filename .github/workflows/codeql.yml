@@ -920,8 +920,9 @@ jobs:
         env:
           CODEQL_PATH: ${{ steps.init-rust-pr.outputs.codeql-path }}
         run: |
-          "$CODEQL_PATH" database run-queries --help > "$RUNNER_TEMP/codeql-query-help.txt"
-          grep -q -- '--evaluator-log' "$RUNNER_TEMP/codeql-query-help.txt"
+          "$CODEQL_PATH" database run-queries --help \
+            --evaluator-log="$RUNNER_TEMP/rust-evaluator.jsonl" --evaluator-log-minify \
+            > "$RUNNER_TEMP/codeql-query-help.txt"
           "$CODEQL_PATH" generate log-summary --help > "$RUNNER_TEMP/codeql-summary-help.txt"
           python3 - <<'PY'
           import json
