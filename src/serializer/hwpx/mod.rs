@@ -108,7 +108,7 @@ pub fn serialize_hwpx_with_report(doc: &Document) -> Result<SerializedDocument, 
     z.write_deflated(
         "Preview/PrvText.txt",
         if preview_text.is_empty() {
-            PRV_TEXT
+            b"\r\n"
         } else {
             preview_text.as_bytes()
         },
