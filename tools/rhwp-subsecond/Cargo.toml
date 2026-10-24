@@ -9,4 +9,4 @@ build = "build.rs"
 subsecond-dev = ["rhwp/subsecond-dev"]
 
 [dependencies]
-rhwp = { path = "../.." }
+rhwp = { package = "shin-rhwp", path = "../.." }

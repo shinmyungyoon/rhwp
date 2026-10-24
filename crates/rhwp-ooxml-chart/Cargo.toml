@@ -1,9 +1,14 @@
 [package]
-name = "rhwp-ooxml-chart"
+include = ["/Cargo.toml", "/src/**", "/LICENSE"]
+name = "shin-rhwp-ooxml-chart"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-publish = false
+publish = ["crates-io"]
+repository = "https://github.com/shinmyungyoon/rhwp"
+
+[lib]
+name = "rhwp_ooxml_chart"
 
 [lints.clippy]
 too_many_arguments = "allow"

@@ -1,19 +1,44 @@
 [package]
-name = "rhwp"
+name = "shin-rhwp"
 version = "0.8.7"
 edition = "2021"
 description = "HWP file viewer and editor written in Rust, targeting WebAssembly"
 license = "MIT"
-repository = "https://github.com/edwardkim/rhwp"
+repository = "https://github.com/shinmyungyoon/rhwp"
+publish = ["crates-io"]
 autotests = false
 autoexamples = false
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/build.rs",
+    "/src/**",
+    "/LICENSE",
+    "/README.md",
+    "/README_EN.md",
+    "/THIRD_PARTY_LICENSES.md",
+    "/llms.txt",
+    "/saved/blank2010.hwp",
+    "/mydocs/manual/agent_knowledge_map.md",
+    "/mydocs/manual/agent_troubleshooting_guide.md",
+    "/mydocs/manual/gym_optional_tool.md",
+    "/mydocs/manual/recipes/01_fill_form_and_submit.md",
+    "/mydocs/manual/recipes/02_table_csv_roundtrip.md",
+    "/mydocs/manual/recipes/03_redact_before_sharing.md",
+    "/mydocs/manual/recipes/04_safety_check_untrusted_doc.md",
+    "/mydocs/manual/recipes/05_mail_merge_batch_fill.md",
+    "/mydocs/manual/recipes/06_visual_regression_before_after.md",
+    "/mydocs/tech/agent_roadmap/atlas_r1_r200.md",
+]
 
 [workspace]
+exclude = ["vendor/svg2pdf"]
 members = [".", "crates/*", "tools/rhwp-subsecond", "bindings/Native", "tools/batch-convert", "tools/llm_verifier/verdict_protocol", "tools/llm_verifier/claim_bind", "tools/llm_verifier/criteria_decomp"]
 default-members = [".", "crates/*"]
 resolver = "2"
 
 [lib]
+name = "rhwp"
 # rhwp 는 Rust 라이브러리가 먼저다 — CLI 두 개, `bindings/Native`, `tools/*` 가 전부 rlib 으로
 # 링크한다. 브라우저용 cdylib 이 그 다음이다. 이 순서는 Dioxus CLI 가 핫패치 인자를 잡을 때 첫
 # crate type 으로 분류하는 규칙과도 맞아떨어진다 — 뒤집으면 `--hot-patch` 가 조용히 안 먹는다.
@@ -226,9 +251,9 @@ path = "tests/overflow_cell_baseline.rs"
 # END RHWP GENERATED TEST TARGETS
 
 [dependencies]
-rhwp-contracts = { path = "crates/rhwp-contracts" }
-rhwp-ooxml-chart = { path = "crates/rhwp-ooxml-chart" }
-rhwp-password-crypto = { path = "crates/rhwp-password-crypto" }
+rhwp-contracts = { package = "shin-rhwp-contracts", path = "crates/rhwp-contracts", version = "=0.1.0" }
+rhwp-ooxml-chart = { package = "shin-rhwp-ooxml-chart", path = "crates/rhwp-ooxml-chart", version = "=0.1.0" }
+rhwp-password-crypto = { package = "shin-rhwp-password-crypto", path = "crates/rhwp-password-crypto", version = "=0.1.0" }
 wasm-bindgen = "0.2"
 cfb = "0.15"
 crc32fast = "1"
@@ -315,7 +340,7 @@ gpu = ["dep:vello", "dep:vello_svg", "dep:pollster", "dep:resvg-gpu"]
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cap-std = { version = "=4.0.2", default-features = false }
 cap-fs-ext = { version = "=4.0.2", default-features = false, features = ["std"] }
-svg2pdf = "0.13"
+svg2pdf = { package = "shin-rhwp-svg2pdf", path = "vendor/svg2pdf", version = "=0.13.0" }
 usvg = "0.45"
 resvg = { version = "0.47", optional = true }
 pdf-writer = "0.12"
@@ -512,5 +537,3 @@ codegen-units = 16
 # 비는 시점에 재판단한다. 그때까지 이 패치를 유지·관리한다.
 # [#7077] 동일 fork rev의 결정화 패치 위에 PDF stitching 함수 트리 보정을
 # 로컬 vendor로 포함한다. 출처·변경 범위는 vendor/svg2pdf/RHWP_PATCHES.md 참조.
-[patch.crates-io]
-svg2pdf = { path = "vendor/svg2pdf" }

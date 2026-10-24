@@ -37,6 +37,14 @@ These changes do not provide secure redaction, exact layout, or crash-proof dura
 
 This fork is not yet a distribution-ready Cargo release. Embedded-data
 provenance and the final package contents still require review.
+The prepared registry names are `shin-rhwp`, `shin-rhwp-contracts`,
+`shin-rhwp-ooxml-chart`, `shin-rhwp-password-crypto`, and `shin-rhwp-svg2pdf`.
+Rust library names remain unchanged. Local archives passed Cargo verification.
+A standalone native consumer ran the strict parser, a WASM consumer check
+passed, and both PDF gradient regressions passed against the unpacked archive.
+These checks used a temporary local dependency source, not published packages.
+Real crates.io resolution still requires verification after the supporting
+packages are published. No package has been published yet.
 The upstream project information below does not describe a published build
 of this fork.
 
