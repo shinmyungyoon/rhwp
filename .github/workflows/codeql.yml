@@ -845,6 +845,8 @@ jobs:
       - name: Install Rust toolchain
         if: ${{ matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) }}
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 브랜치 (2026-08-01 시점)
+        with:
+          toolchain: 1.93.1
 
       - name: Identify Rust extractor Cargo cache
         id: rust-cargo-key

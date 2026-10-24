@@ -368,10 +368,13 @@ class NextestArchiveWorkflowTests(unittest.TestCase):
         self.assertIn("steps.rust-cache.outputs.cache-hit", summary)
         self.assertIn("if: ${{ always() }}", summary)
         self.assertIn(
-            "save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && "
-            "(github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}",
+            "if: ${{ success() && (github.event_name == 'pull_request' || (github.event_name == 'push' && "
+            "(github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main'))) && steps.rust-cache.outputs.cache-hit != 'true' }}",
             self.builder,
         )
+        self.assertIn("actions/cache/restore@", self.builder)
+        self.assertIn("${{ github.sha }}-${{ inputs.duration_policy_sha || 'committed' }}", self.builder)
+        self.assertNotIn("restore-keys:", self.builder)
 
     def test_internal_workspace_crates_have_a_required_execution_gate(self) -> None:
         step = step_body(self.ci, "Test internal Rust crates")
