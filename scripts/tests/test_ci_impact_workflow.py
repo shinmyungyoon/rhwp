@@ -519,6 +519,7 @@ class CiImpactWorkflowTests(unittest.TestCase):
             "TEST_ARCHIVE_B_1_RESULT": "skipped",
             "TEST_ARCHIVE_C_1_RESULT": "skipped",
             "TEST_ARCHIVE_D_1_RESULT": "skipped",
+            "TEST_ARCHIVE_D_2_RESULT": "skipped",
             "LINT_RESULT": "skipped",
             "NATIVE_SKIA_RESULT": "skipped",
             "FRONTEND_UNIT_RESULT": "success",
@@ -1038,7 +1039,8 @@ mod support;
             ("a", 1, "hash:1/1"),
             ("b", 1, "hash:1/1"),
             ("c", 1, "hash:1/1"),
-            ("d", 1, "hash:1/1"),
+            ("d", 1, "hash:1/2"),
+            ("d", 2, "hash:2/2"),
         ):
             job_name = f"test-archive-{archive_label}-shard-{index}"
             with self.subTest(job=job_name):
@@ -1091,6 +1093,11 @@ mod support;
                     "needs.preflight.outputs.rust_required == 'true'",
                     self._step(step_name, aggregate),
                 )
+                for shard in (1, 2):
+                    self.assertIn(
+                        f"needs['test-archive-d-shard-{shard}'].result == 'success'",
+                        self._step(step_name, aggregate),
+                    )
 
     def test_aggregate_accepts_every_supported_stage4_lane(self) -> None:
         rust_success = {
@@ -1104,6 +1111,7 @@ mod support;
             "TEST_ARCHIVE_B_1_RESULT": "success",
             "TEST_ARCHIVE_C_1_RESULT": "success",
             "TEST_ARCHIVE_D_1_RESULT": "success",
+            "TEST_ARCHIVE_D_2_RESULT": "success",
         }
         cases = {
             "frontend-only": {},
@@ -1157,6 +1165,28 @@ mod support;
             with self.subTest(case=name):
                 result = self._run_aggregate(**env)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_aggregate_requires_success_from_each_archive_d_partition(self) -> None:
+        successful = {
+            "RUST_REQUIRED": "true",
+            "LINT_RESULT": "success",
+            **{f"BUILD_ARCHIVE_{archive}_RESULT": "success" for archive in "ABCD"},
+            **{f"TEST_ARCHIVE_{archive}_1_RESULT": "success" for archive in "ABCD"},
+            "TEST_ARCHIVE_D_2_RESULT": "success",
+        }
+        accepted = self._run_aggregate(**successful)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        for shard in (1, 2):
+            for state in ("", "failure", "cancelled", "skipped"):
+                with self.subTest(shard=shard, state=state):
+                    result = self._run_aggregate(**{
+                        **successful, f"TEST_ARCHIVE_D_{shard}_RESULT": state,
+                    })
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("Rust lane expected success", result.stdout)
+        unexpected = self._run_aggregate(TEST_ARCHIVE_D_2_RESULT="success")
+        self.assertNotEqual(unexpected.returncode, 0, unexpected.stdout + unexpected.stderr)
+        self.assertIn("Rust lane expected skipped", unexpected.stdout)
 
     def test_aggregate_rejects_axis_result_mismatches(self) -> None:
         cases = {

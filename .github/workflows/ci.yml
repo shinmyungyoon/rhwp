@@ -976,13 +976,20 @@ jobs:
       - name: Rust build cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
-          shared-key: lint
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          shared-key: lint-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          cache-directories: ${{ runner.temp }}/cargo-input-cache
+          cache-workspace-crates: true
+          save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
       # `Cargo.toml`의 integration target은 파생 harness를 가리킨다. 깨끗한
       # checkout에서도 fmt/clippy가 target을 해석하기 전에 먼저 준비한다.
       - name: Prepare derived Rust test suites
         run: node scripts/rust-test-suite-manifest.mjs --prepare
+
+      - name: Restore unchanged Cargo input timestamps
+        run: |
+          python3 -m unittest scripts/tests/test_cargo_cache_inputs.py
+          python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -1049,7 +1056,7 @@ jobs:
       - name: Test internal Rust crates
         run: |
           cargo test --workspace \
-            --exclude rhwp \
+            --exclude shin-rhwp \
             --exclude rhwp-subsecond \
             --exclude rhwp-native-ffi \
             --exclude batch-convert \
@@ -1131,7 +1138,7 @@ jobs:
 
       # [#4630] wasm32 전용 cfg 경로의 lint 부채는 네이티브 Clippy로 보이지 않는다.
       - name: Clippy (WASM32)
-        run: cargo clippy -p rhwp --lib --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy -p shin-rhwp --lib --target wasm32-unknown-unknown -- -D warnings
 
       # [#3664] Native FFI 크레이트가 워크스페이스 밖이라 어느 CI job 도 건드리지
       # 않는 사이 코어 API 변경을 못 따라가 이미 컴파일이 깨져 있었다(C#·Swift 래퍼
@@ -1158,6 +1165,9 @@ jobs:
 
       - name: Check WASM target
         run: cargo check --target wasm32-unknown-unknown --lib
+
+      - name: Record Cargo input timestamps
+        run: python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
   native-skia-tests:
     name: Native Skia tests
@@ -1214,12 +1224,14 @@ jobs:
 
       # [#2431 C] 기본 test job 의 rust-cache 이행 후 writer가 사라진
       # Linux-cargo-* namespace 대신 Native Skia 전용 shared key를 사용한다.
-      # PR은 restore-only, devel/main push만 save하는 신뢰 경계를 유지한다.
+      # PR caches use a separate key and GitHub's merge-ref scope.
       - name: Rust build cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
-          shared-key: native-skia
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          shared-key: native-skia-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          cache-directories: ${{ runner.temp }}/cargo-input-cache
+          cache-workspace-crates: true
+          save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
       - name: Install native Skia runtime packages
         id: native-skia-runtime
@@ -1261,6 +1273,9 @@ jobs:
         if: steps.native-skia-runtime.outputs.available != 'false'
         run: node scripts/rust-test-suite-manifest.mjs --prepare
 
+      - name: Restore unchanged Cargo input timestamps
+        run: python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
+
       - name: Native Skia tests
         if: steps.native-skia-runtime.outputs.available != 'false'
         env:
@@ -1295,6 +1310,9 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Record Cargo input timestamps
+        run: python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
   frontend-unit-gates:
     name: Frontend unit gates
@@ -1359,9 +1377,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-frontend-wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-frontend-wasm-cargo-
+          key: ${{ runner.os }}-${{ runner.arch }}-frontend-wasm-1.93.1-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}-${{ github.sha }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', '**/.cargo/config.toml') }}
 
       - name: Build fresh WASM package for frontend gates
         run: wasm-pack build --target web --dev
@@ -1456,14 +1472,14 @@ jobs:
         run: node --test scripts/frontend-font-assets.test.mjs
 
       - name: Save frontend WASM cargo cache
-        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') && steps.frontend_wasm_cargo_cache_restore.outputs.cache-hit != 'true' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main'))) && steps.frontend_wasm_cargo_cache_restore.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-frontend-wasm-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ steps.frontend_wasm_cargo_cache_restore.outputs.cache-primary-key }}
 
   test-archive-a-shard-1:
     uses: ./.github/workflows/run-nextest-archives.yml
@@ -1545,11 +1561,32 @@ jobs:
     permissions:
       contents: read
     with:
-      label: Archive D
+      label: Archive D 1/2
       count_label: d-1
       archive_label: d
       filterset: "all()"
-      partition: "hash:1/1"
+      partition: "hash:1/2"
+      security_sweep_samples_json: ${{ needs.preflight.outputs.security_sweep_samples_json || '[]' }}
+
+  test-archive-d-shard-2:
+    uses: ./.github/workflows/run-nextest-archives.yml
+    needs: [preflight, build-test-archive-d]
+    if: >-
+      ${{
+        always()
+        && needs.preflight.result == 'success'
+        && needs.preflight.outputs.fast_pass != 'true'
+        && needs.preflight.outputs.rust_required == 'true'
+        && needs['build-test-archive-d'].result == 'success'
+      }}
+    permissions:
+      contents: read
+    with:
+      label: Archive D 2/2
+      count_label: d-2
+      archive_label: d
+      filterset: "all()"
+      partition: "hash:2/2"
       security_sweep_samples_json: ${{ needs.preflight.outputs.security_sweep_samples_json || '[]' }}
 
 
@@ -1701,6 +1738,7 @@ jobs:
       - test-archive-b-shard-1
       - test-archive-c-shard-1
       - test-archive-d-shard-1
+      - test-archive-d-shard-2
       - lint
       - native-skia-tests
       - frontend-unit-gates
@@ -1720,6 +1758,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1734,6 +1773,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1748,6 +1788,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1763,6 +1804,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1777,6 +1819,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1791,6 +1834,7 @@ jobs:
             && needs['test-archive-b-shard-1'].result == 'success'
             && needs['test-archive-c-shard-1'].result == 'success'
             && needs['test-archive-d-shard-1'].result == 'success'
+            && needs['test-archive-d-shard-2'].result == 'success'
           }}
         run: |
           read -r expected_a < archive-expected-a/archive-expected-total.txt
@@ -1801,7 +1845,8 @@ jobs:
           read -r b1 < shard-counts/shard-count-b-1/shard-count-b-1.txt
           read -r c1 < shard-counts/shard-count-c-1/shard-count-c-1.txt
           read -r d1 < shard-counts/shard-count-d-1/shard-count-d-1.txt
-          if ! [[ "$expected_a" =~ ^[0-9]+$ && "$expected_b" =~ ^[0-9]+$ && "$expected_c" =~ ^[0-9]+$ && "$expected_d" =~ ^[0-9]+$ && "$a1" =~ ^[0-9]+$ && "$b1" =~ ^[0-9]+$ && "$c1" =~ ^[0-9]+$ && "$d1" =~ ^[0-9]+$ ]]; then
+          read -r d2 < shard-counts/shard-count-d-2/shard-count-d-2.txt
+          if ! [[ "$expected_a" =~ ^[0-9]+$ && "$expected_b" =~ ^[0-9]+$ && "$expected_c" =~ ^[0-9]+$ && "$expected_d" =~ ^[0-9]+$ && "$a1" =~ ^[0-9]+$ && "$b1" =~ ^[0-9]+$ && "$c1" =~ ^[0-9]+$ && "$d1" =~ ^[0-9]+$ && "$d2" =~ ^[0-9]+$ ]]; then
             echo "::error::archive expected counts and shard counts must be non-negative integers"
             exit 1
           fi
@@ -1817,11 +1862,11 @@ jobs:
             echo "::error::Archive C shard total mismatch: $c1 != $expected_c"
             exit 1
           fi
-          if (( d1 != expected_d )); then
-            echo "::error::Archive D shard total mismatch: $d1 != $expected_d"
+          if (( d1 + d2 != expected_d )); then
+            echo "::error::Archive D shard total mismatch: $((d1 + d2)) != $expected_d"
             exit 1
           fi
-          printf 'archive_total=%s shard_total=%s\n' "$((expected_a + expected_b + expected_c + expected_d))" "$((a1 + b1 + c1 + d1))"
+          printf 'archive_total=%s shard_total=%s\n' "$((expected_a + expected_b + expected_c + expected_d))" "$((a1 + b1 + c1 + d1 + d2))"
       - name: Check Build & Test worker results
         env:
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
@@ -1837,6 +1882,7 @@ jobs:
           TEST_ARCHIVE_B_1_RESULT: ${{ needs['test-archive-b-shard-1'].result }}
           TEST_ARCHIVE_C_1_RESULT: ${{ needs['test-archive-c-shard-1'].result }}
           TEST_ARCHIVE_D_1_RESULT: ${{ needs['test-archive-d-shard-1'].result }}
+          TEST_ARCHIVE_D_2_RESULT: ${{ needs['test-archive-d-shard-2'].result }}
           LINT_RESULT: ${{ needs.lint.result }}
           NATIVE_SKIA_RESULT: ${{ needs['native-skia-tests'].result }}
           FRONTEND_UNIT_RESULT: ${{ needs['frontend-unit-gates'].result }}
@@ -1865,10 +1911,10 @@ jobs:
             exit 0
           fi
           failed=0
-          rust_results="${LINT_RESULT}/${BUILD_ARCHIVE_A_RESULT}/${BUILD_ARCHIVE_B_RESULT}/${BUILD_ARCHIVE_C_RESULT}/${BUILD_ARCHIVE_D_RESULT}/${TEST_ARCHIVE_A_1_RESULT}/${TEST_ARCHIVE_B_1_RESULT}/${TEST_ARCHIVE_C_1_RESULT}/${TEST_ARCHIVE_D_1_RESULT}"
+          rust_results="${LINT_RESULT}/${BUILD_ARCHIVE_A_RESULT}/${BUILD_ARCHIVE_B_RESULT}/${BUILD_ARCHIVE_C_RESULT}/${BUILD_ARCHIVE_D_RESULT}/${TEST_ARCHIVE_A_1_RESULT}/${TEST_ARCHIVE_B_1_RESULT}/${TEST_ARCHIVE_C_1_RESULT}/${TEST_ARCHIVE_D_1_RESULT}/${TEST_ARCHIVE_D_2_RESULT}"
           case "${RUST_REQUIRED}" in
-            true) [[ "$rust_results" == "success/success/success/success/success/success/success/success/success" ]] || { echo "::error::Rust lane expected success for lint/four builders/four workers, got: $rust_results"; failed=1; } ;;
-            false) [[ "$rust_results" == "skipped/skipped/skipped/skipped/skipped/skipped/skipped/skipped/skipped" ]] || { echo "::error::Rust lane expected skipped, got: $rust_results"; failed=1; } ;;
+            true) [[ "$rust_results" == "success/success/success/success/success/success/success/success/success/success" ]] || { echo "::error::Rust lane expected success for lint/four builders/five workers, got: $rust_results"; failed=1; } ;;
+            false) [[ "$rust_results" == "skipped/skipped/skipped/skipped/skipped/skipped/skipped/skipped/skipped/skipped" ]] || { echo "::error::Rust lane expected skipped, got: $rust_results"; failed=1; } ;;
             *) echo "::error::Unknown rust_required: ${RUST_REQUIRED}"; failed=1 ;;
           esac
           case "${NATIVE_SKIA_REQUIRED}" in

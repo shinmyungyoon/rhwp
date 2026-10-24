@@ -100,14 +100,17 @@ jobs:
         with:
           tool: nextest
 
-      # [#2393] 수동 restore/save 캐시를 rust-cache로 관리한다. 저장 정책은 종전과
-      # 동일하게 devel/main push로 한정한다.
+      # Keep test executables; dependency-only cache cleanup removes them.
       - name: Rust build cache
         id: rust-cache
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          shared-key: test-archive
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ${{ runner.temp }}/cargo-input-cache
+          key: nextest-full-v1-${{ runner.os }}-${{ runner.arch }}-1.93.1-${{ inputs.target_group }}-${{ inputs.cargo_profile }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}-${{ github.sha }}-${{ inputs.duration_policy_sha || 'committed' }}
 
       - name: Inspect disk space after Rust build cache
         run: |
@@ -123,7 +126,7 @@ jobs:
           TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           TARGET_GROUP: ${{ inputs.target_group }}
           CACHE_EXACT_HIT: ${{ steps.rust-cache.outputs.cache-hit || 'false' }}
-          CACHE_SAVE_ELIGIBLE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          CACHE_SAVE_ELIGIBLE: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
         run: |
           {
             echo '### Nextest archive policy'
@@ -203,15 +206,16 @@ jobs:
               ;;
           esac
 
+          python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
           cargo nextest archive \
-            --package rhwp \
+            --package shin-rhwp \
             --cargo-profile "${{ inputs.cargo_profile }}" \
             "${cargo_target_args[@]}" \
             --archive-file tests.tar.zst
           stat --printf='archive=%n bytes=%s\n' tests.tar.zst
 
           cargo nextest list \
-            --package rhwp \
+            --package shin-rhwp \
             --cargo-profile "${{ inputs.cargo_profile }}" \
             "${cargo_target_args[@]}" \
             --message-format json > nextest-list.json
@@ -222,6 +226,7 @@ jobs:
           fi
           printf '%s\n' "$runnable" > archive-expected-total.txt
           echo "archive=${{ inputs.archive_label }} expected_runnable=${runnable}"
+          python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
       - name: Upload test archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -239,3 +244,14 @@ jobs:
           path: archive-expected-total.txt
           retention-days: 1
           if-no-files-found: error
+
+      - name: Save complete test build cache
+        if: ${{ success() && (github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main'))) && steps.rust-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ${{ runner.temp }}/cargo-input-cache
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}

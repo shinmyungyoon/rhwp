@@ -192,7 +192,8 @@
         "test-archive-a-shard-1 / Default-feature tests (Archive A)",
         "test-archive-b-shard-1 / Default-feature tests (Archive B)",
         "test-archive-c-shard-1 / Default-feature tests (Archive C)",
-        "test-archive-d-shard-1 / Default-feature tests (Archive D)"
+        "test-archive-d-shard-1 / Default-feature tests (Archive D 1/2)",
+        "test-archive-d-shard-2 / Default-feature tests (Archive D 2/2)"
       ]
     },
     ".github/workflows/issue-form-labels.yml": {

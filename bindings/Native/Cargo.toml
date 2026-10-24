@@ -9,4 +9,4 @@ name = "rhwp_native_ffi"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-rhwp_core = { package = "rhwp", path = "../.." }
+rhwp_core = { package = "shin-rhwp", path = "../.." }

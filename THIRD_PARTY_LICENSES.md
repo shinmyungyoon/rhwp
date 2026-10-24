@@ -54,7 +54,7 @@ rhwp 프로젝트가 사용하는 서드파티 라이브러리 및 리소스의 
 | strum | 0.28.0 | MIT | Peternator7/strum | enum derive |
 | subsecond | 0.7.10 | MIT OR Apache-2.0 | DioxusLabs/dioxus | 개발 핫패치 (optional) |
 | subsetter | 0.2.6 | MIT OR Apache-2.0 | typst/subsetter | 폰트 subset |
-| svg2pdf | 0.13.0 | MIT OR Apache-2.0 | typst/svg2pdf | SVG → PDF |
+| shin-rhwp-svg2pdf (patched svg2pdf) | 0.13.0 | MIT OR Apache-2.0 | typst/svg2pdf; local changes described in vendor/svg2pdf/RHWP_PATCHES.md | SVG → PDF |
 | svgtypes | 0.16.1 | Apache-2.0 OR MIT | linebender/svgtypes | SVG 값 파싱 |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | harfbuzz/ttf-parser | 폰트 파싱 |
 | unicode-properties | 0.1.4 | MIT OR Apache-2.0 | unicode-rs/unicode-properties | 유니코드 문자 분류 |

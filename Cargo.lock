@@ -2403,122 +2403,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "rhwp"
-version = "0.8.7"
-dependencies = [
- "aes",
- "argon2",
- "base64 0.23.1",
- "blake3",
- "byteorder",
- "cap-fs-ext",
- "cap-std",
- "cbc",
- "cfb",
- "chacha20poly1305",
- "cipher",
- "codepage",
- "console_error_panic_hook",
- "crc32fast",
- "ctutils",
- "des",
- "ed25519-dalek",
- "embedded-io",
- "encoding_rs",
- "flate2",
- "getrandom 0.4.3",
- "hmac",
- "image",
- "js-sys",
- "ml-dsa",
- "ml-kem",
- "paste",
- "pbkdf2",
- "pcx",
- "pdf-writer",
- "pollster",
- "proptest",
- "quick-xml",
- "rand_core 0.10.1",
- "resvg 0.47.0",
- "resvg 0.48.1",
- "rhwp-contracts",
- "rhwp-ooxml-chart",
- "rhwp-password-crypto",
- "roxmltree 0.21.1",
- "rustybuzz",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "skia-safe",
- "snafu",
- "strum",
- "subsecond",
- "subsetter",
- "svg2pdf",
- "svgtypes 0.16.1",
- "ttf-parser",
- "unicode-properties",
- "unicode-segmentation",
- "unicode-width",
- "usvg 0.45.1",
- "vello",
- "vello_svg",
- "wasm-bindgen",
- "wasm-bindgen-test",
- "web-sys",
- "zeroize",
- "zip",
-]
-
-[[package]]
-name = "rhwp-contracts"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
 name = "rhwp-native-ffi"
 version = "0.1.0"
 dependencies = [
- "rhwp",
-]
-
-[[package]]
-name = "rhwp-ooxml-chart"
-version = "0.1.0"
-dependencies = [
- "quick-xml",
-]
-
-[[package]]
-name = "rhwp-password-crypto"
-version = "0.1.0"
-dependencies = [
- "aes",
- "base64 0.23.1",
- "cbc",
- "crc32fast",
- "ctutils",
- "des",
- "flate2",
- "getrandom 0.4.3",
- "hmac",
- "pbkdf2",
- "quick-xml",
- "roxmltree 0.21.1",
- "sha1",
- "sha2",
- "zip",
+ "shin-rhwp",
 ]
 
 [[package]]
 name = "rhwp-subsecond"
 version = "0.0.0"
 dependencies = [
- "rhwp",
+ "shin-rhwp",
 ]
 
 [[package]]
@@ -2736,6 +2631,129 @@ dependencies = [
  "digest",
  "keccak",
  "sponge-cursor",
+]
+
+[[package]]
+name = "shin-rhwp"
+version = "0.8.7"
+dependencies = [
+ "aes",
+ "argon2",
+ "base64 0.23.1",
+ "blake3",
+ "byteorder",
+ "cap-fs-ext",
+ "cap-std",
+ "cbc",
+ "cfb",
+ "chacha20poly1305",
+ "cipher",
+ "codepage",
+ "console_error_panic_hook",
+ "crc32fast",
+ "ctutils",
+ "des",
+ "ed25519-dalek",
+ "embedded-io",
+ "encoding_rs",
+ "flate2",
+ "getrandom 0.4.3",
+ "hmac",
+ "image",
+ "js-sys",
+ "ml-dsa",
+ "ml-kem",
+ "paste",
+ "pbkdf2",
+ "pcx",
+ "pdf-writer",
+ "pollster",
+ "proptest",
+ "quick-xml",
+ "rand_core 0.10.1",
+ "resvg 0.47.0",
+ "resvg 0.48.1",
+ "roxmltree 0.21.1",
+ "rustybuzz",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "shin-rhwp-contracts",
+ "shin-rhwp-ooxml-chart",
+ "shin-rhwp-password-crypto",
+ "shin-rhwp-svg2pdf",
+ "skia-safe",
+ "snafu",
+ "strum",
+ "subsecond",
+ "subsetter",
+ "svgtypes 0.16.1",
+ "ttf-parser",
+ "unicode-properties",
+ "unicode-segmentation",
+ "unicode-width",
+ "usvg 0.45.1",
+ "vello",
+ "vello_svg",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
+ "web-sys",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
+name = "shin-rhwp-contracts"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "shin-rhwp-ooxml-chart"
+version = "0.1.0"
+dependencies = [
+ "quick-xml",
+]
+
+[[package]]
+name = "shin-rhwp-password-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "base64 0.23.1",
+ "cbc",
+ "crc32fast",
+ "ctutils",
+ "des",
+ "flate2",
+ "getrandom 0.4.3",
+ "hmac",
+ "pbkdf2",
+ "quick-xml",
+ "roxmltree 0.21.1",
+ "sha1",
+ "sha2",
+ "zip",
+]
+
+[[package]]
+name = "shin-rhwp-svg2pdf"
+version = "0.13.0"
+dependencies = [
+ "fontdb 0.23.0",
+ "image",
+ "log",
+ "miniz_oxide 0.8.9",
+ "once_cell",
+ "pdf-writer",
+ "resvg 0.45.1",
+ "siphasher",
+ "subsetter",
+ "tiny-skia 0.11.4",
+ "ttf-parser",
+ "usvg 0.45.1",
 ]
 
 [[package]]
@@ -2987,24 +3005,6 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
-
-[[package]]
-name = "svg2pdf"
-version = "0.13.0"
-dependencies = [
- "fontdb 0.23.0",
- "image",
- "log",
- "miniz_oxide 0.8.9",
- "once_cell",
- "pdf-writer",
- "resvg 0.45.1",
- "siphasher",
- "subsetter",
- "tiny-skia 0.11.4",
- "ttf-parser",
- "usvg 0.45.1",
-]
 
 [[package]]
 name = "svg_fmt"

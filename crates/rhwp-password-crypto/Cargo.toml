@@ -1,10 +1,15 @@
 [package]
-name = "rhwp-password-crypto"
+include = ["/Cargo.toml", "/src/**", "/LICENSE", "/NOTICE"]
+name = "shin-rhwp-password-crypto"
 version = "0.1.0"
 edition = "2021"
 description = "Shared HWP3, HWP5, and HWPX password cryptography for rhwp"
-license = "MIT"
-publish = false
+license = "MIT AND BSD-3-Clause"
+publish = ["crates-io"]
+repository = "https://github.com/shinmyungyoon/rhwp"
+
+[lib]
+name = "rhwp_password_crypto"
 
 [dependencies]
 aes = "0.9"

@@ -168,7 +168,9 @@ class ReleaseChannelPolicyWorkflowTests(unittest.TestCase):
             (REPO_ROOT / "Cargo.lock").read_text(encoding="utf-8")
         )
         rhwp_packages = [
-            package for package in cargo_lock["package"] if package["name"] == "rhwp"
+            package
+            for package in cargo_lock["package"]
+            if package["name"] == cargo["package"]["name"]
         ]
         self.assertEqual(len(rhwp_packages), 1)
         self.assertEqual(rhwp_packages[0]["version"], release_version)
