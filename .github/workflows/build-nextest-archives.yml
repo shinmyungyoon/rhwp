@@ -107,6 +107,7 @@ jobs:
         with:
           shared-key: test-archive-${{ inputs.target_group }}-${{ inputs.cargo_profile }}-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
           cache-workspace-crates: true
+          cache-directories: ${{ runner.temp }}/cargo-input-cache
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
       - name: Inspect disk space after Rust build cache
@@ -203,7 +204,7 @@ jobs:
               ;;
           esac
 
-          python3 scripts/cargo_cache_inputs.py restore
+          python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
           cargo nextest archive \
             --package shin-rhwp \
             --cargo-profile "${{ inputs.cargo_profile }}" \
@@ -223,7 +224,7 @@ jobs:
           fi
           printf '%s\n' "$runnable" > archive-expected-total.txt
           echo "archive=${{ inputs.archive_label }} expected_runnable=${runnable}"
-          python3 scripts/cargo_cache_inputs.py record
+          python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
       - name: Upload test archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

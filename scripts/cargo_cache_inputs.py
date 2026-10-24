@@ -25,7 +25,7 @@ def source_path(root, name):
     return resolved
 
 
-def record(root, target, head):
+def record(root, target, head, metadata=None):
     files = {}
     for depfile in target.rglob("*.d"):
         for line in depfile.read_text(errors="replace").splitlines():
@@ -46,14 +46,16 @@ def record(root, target, head):
                         "mtime_ns": path.stat().st_mtime_ns,
                     }
     target.mkdir(parents=True, exist_ok=True)
-    (target / ".source-inputs.json").write_text(json.dumps({
+    metadata = metadata or target / ".source-inputs.json"
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    metadata.write_text(json.dumps({
         "version": 1, "head": head, "files": files,
     }), encoding="utf-8")
     return len(files)
 
 
-def restore(root, target, head):
-    metadata = target / ".source-inputs.json"
+def restore(root, target, head, metadata=None):
+    metadata = metadata or target / ".source-inputs.json"
     try:
         data = json.loads(metadata.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -86,11 +88,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("record", "restore"))
     parser.add_argument("--target-dir", default="target")
+    parser.add_argument("--metadata-file")
     args = parser.parse_args()
     root = Path.cwd().resolve()
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     target = Path(args.target_dir).resolve()
-    count = (record if args.command == "record" else restore)(root, target, head)
+    metadata = Path(args.metadata_file).resolve() if args.metadata_file else None
+    count = (record if args.command == "record" else restore)(root, target, head, metadata)
     print(f"Cargo input timestamps: {args.command} {count} identical-source files")
 
 

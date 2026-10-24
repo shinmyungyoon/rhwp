@@ -27,6 +27,16 @@ class CargoInputCacheTests(unittest.TestCase):
         self.assertEqual(restore(self.root, self.target, "head"), 1)
         self.assertEqual(self.source.stat().st_mtime_ns, self.old)
 
+    def test_separate_metadata_survives_target_root_cleanup(self):
+        metadata = self.root / "cache-metadata/inputs.json"
+        self.assertEqual(record(self.root, self.target, "head", metadata), 1)
+        for path in self.target.iterdir():
+            if path.is_file():
+                path.unlink()
+        self.source.touch()
+        self.assertEqual(restore(self.root, self.target, "head", metadata), 1)
+        self.assertEqual(self.source.stat().st_mtime_ns, self.old)
+
     def test_changed_bytes_and_other_commit_never_restore(self):
         record(self.root, self.target, "head")
         self.source.touch()

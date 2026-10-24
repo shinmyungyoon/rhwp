@@ -977,6 +977,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
           shared-key: lint-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          cache-directories: ${{ runner.temp }}/cargo-input-cache
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
@@ -988,7 +989,7 @@ jobs:
       - name: Restore unchanged Cargo input timestamps
         run: |
           python3 -m unittest scripts/tests/test_cargo_cache_inputs.py
-          python3 scripts/cargo_cache_inputs.py restore
+          python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -1166,7 +1167,7 @@ jobs:
         run: cargo check --target wasm32-unknown-unknown --lib
 
       - name: Record Cargo input timestamps
-        run: python3 scripts/cargo_cache_inputs.py record
+        run: python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
   native-skia-tests:
     name: Native Skia tests
@@ -1228,6 +1229,7 @@ jobs:
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
           shared-key: native-skia-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          cache-directories: ${{ runner.temp }}/cargo-input-cache
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
@@ -1272,7 +1274,7 @@ jobs:
         run: node scripts/rust-test-suite-manifest.mjs --prepare
 
       - name: Restore unchanged Cargo input timestamps
-        run: python3 scripts/cargo_cache_inputs.py restore
+        run: python3 scripts/cargo_cache_inputs.py restore --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
       - name: Native Skia tests
         if: steps.native-skia-runtime.outputs.available != 'false'
@@ -1310,7 +1312,7 @@ jobs:
           esac
 
       - name: Record Cargo input timestamps
-        run: python3 scripts/cargo_cache_inputs.py record
+        run: python3 scripts/cargo_cache_inputs.py record --metadata-file "$RUNNER_TEMP/cargo-input-cache/inputs.json"
 
   frontend-unit-gates:
     name: Frontend unit gates
