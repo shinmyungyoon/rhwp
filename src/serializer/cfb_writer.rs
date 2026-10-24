@@ -22,6 +22,7 @@ use super::content_loss::{
 use super::doc_info::{serialize_doc_info, surgical_update_section_count};
 use super::header::serialize_file_header;
 use super::mini_cfb;
+use super::preview::build_preview_text;
 use super::SerializeError;
 
 #[derive(Clone, Copy)]
@@ -264,30 +265,6 @@ fn supplement_preview(doc: &Document) -> Option<Preview> {
         image: doc.preview.as_ref().and_then(|p| p.image.clone()),
         text: Some(text),
     })
-}
-
-/// 본문 문단에서 미리보기 텍스트를 만든다.
-///
-/// 한컴은 앞부분 일부만 담는다 (shortcut.hwp 실측 2044B ≈ 1022자).
-/// 표/글상자 안 텍스트는 제외하고 본문 문단만 이어 붙인다.
-fn build_preview_text(doc: &Document) -> String {
-    const MAX_CHARS: usize = 1000;
-
-    let mut out = String::new();
-    for section in &doc.sections {
-        for para in &section.paragraphs {
-            let line = para.text.trim_end_matches('\u{0}');
-            if line.is_empty() {
-                continue;
-            }
-            out.push_str(line);
-            out.push_str("\r\n");
-            if out.chars().count() >= MAX_CHARS {
-                return out.chars().take(MAX_CHARS).collect();
-            }
-        }
-    }
-    out
 }
 
 /// raw deflate 압축 (wbits=-15)

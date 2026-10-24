@@ -103,13 +103,15 @@ pub fn serialize_hwpx_with_report(doc: &Document) -> Result<SerializedDocument, 
         }
     }
 
-    // 5. Preview/PrvText.txt + Preview/PrvImage.png — 원본 보존 우선.
-    //    하드코딩 상수는 빈/placeholder 미리보기라 원본 썸네일·미리보기 텍스트를
-    //    잃는다. 보조 엔트리가 있으면 원본을 그대로 출력한다.
+    // Preview text is derived; an imported copy can contain text removed by an edit.
+    let preview_text = super::preview::build_preview_text(doc);
     z.write_deflated(
         "Preview/PrvText.txt",
-        doc.hwpx_aux_entry("Preview/PrvText.txt")
-            .unwrap_or(PRV_TEXT),
+        if preview_text.is_empty() {
+            PRV_TEXT
+        } else {
+            preview_text.as_bytes()
+        },
     )?;
     z.write_deflated(
         "Preview/PrvImage.png",
@@ -391,11 +393,8 @@ mod tests {
         assert!(parsed.bin_data_content.is_empty());
     }
 
-    /// 보조 엔트리(version.xml/settings.xml/Preview/*)가 보존된 경우,
-    /// 직렬화기는 하드코딩 상수가 아니라 원본 바이트를 그대로 출력해야 한다.
-    /// (한컴 변환본 라운드트립 무손실 보장)
     #[test]
-    fn aux_entries_passthrough_verbatim() {
+    fn opaque_aux_entries_pass_through_while_preview_text_refreshes() {
         let mut doc = Document::default();
         let custom: &[(&str, &[u8])] = &[
             ("version.xml", b"<custom-version platform=\"Mac\"/>"),
@@ -417,7 +416,11 @@ mod tests {
                 .unwrap_or_else(|_| panic!("missing entry {path}"));
             let mut got = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut got).expect("read");
-            assert_eq!(&got, expected, "{path} not passed through verbatim");
+            if *path == "Preview/PrvText.txt" {
+                assert_eq!(&got, static_assets::PRV_TEXT);
+            } else {
+                assert_eq!(&got, expected, "{path} not passed through verbatim");
+            }
         }
     }
 

@@ -17,6 +17,7 @@ pub mod hwpx;
 pub mod mini_cfb;
 /// [#4100] 중첩 OLE CFB 의 스트림 교체 — 루트 CLSID 와 나머지 스트림을 보존한다.
 pub mod ole_container;
+mod preview;
 pub mod record_writer;
 
 pub use cfb_writer::{
