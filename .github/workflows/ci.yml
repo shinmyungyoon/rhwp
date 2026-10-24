@@ -976,8 +976,7 @@ jobs:
       - name: Rust build cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
-          shared-key: lint
-          key: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          shared-key: lint-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
@@ -1220,8 +1219,7 @@ jobs:
       - name: Rust build cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
-          shared-key: native-skia
-          key: ${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
+          shared-key: native-skia-${{ github.event_name == 'pull_request' && format('pr-{0}-{1}', github.event.pull_request.number, github.sha) || format('trusted-{0}', github.sha) }}
           cache-workspace-crates: true
           save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
