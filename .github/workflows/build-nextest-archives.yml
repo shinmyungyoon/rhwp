@@ -100,14 +100,15 @@ jobs:
         with:
           tool: nextest
 
-      # [#2393] 수동 restore/save 캐시를 rust-cache로 관리한다. 저장 정책은 종전과
-      # 동일하게 devel/main push로 한정한다.
+      # Partition keys prevent concurrent archive jobs from overwriting each other's cache.
       - name: Rust build cache
         id: rust-cache
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.9.1
         with:
-          shared-key: test-archive
-          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          shared-key: test-archive-${{ inputs.target_group }}-${{ inputs.cargo_profile }}
+          key: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'trusted' }}
+          cache-workspace-crates: true
+          save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
 
       - name: Inspect disk space after Rust build cache
         run: |
@@ -123,7 +124,7 @@ jobs:
           TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
           TARGET_GROUP: ${{ inputs.target_group }}
           CACHE_EXACT_HIT: ${{ steps.rust-cache.outputs.cache-hit || 'false' }}
-          CACHE_SAVE_ELIGIBLE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}
+          CACHE_SAVE_ELIGIBLE: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}
         run: |
           {
             echo '### Nextest archive policy'

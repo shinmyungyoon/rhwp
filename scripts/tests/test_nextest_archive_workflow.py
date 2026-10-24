@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -300,22 +301,24 @@ class NextestArchiveWorkflowTests(unittest.TestCase):
         self.assertIn("steps.rust-cache.outputs.cache-hit", summary)
         self.assertIn("if: ${{ always() }}", summary)
         self.assertIn(
-            "save-if: ${{ github.event_name == 'push' && "
-            "(github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main') }}",
+            "save-if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && "
+            "(github.ref == 'refs/heads/devel' || github.ref == 'refs/heads/main')) }}",
             self.builder,
         )
 
     def test_internal_workspace_crates_have_a_required_execution_gate(self) -> None:
         step = step_body(self.ci, "Test internal Rust crates")
         self.assertIn("cargo test --workspace", step)
+        root_package = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text())["package"]["name"]
+        excluded_packages = re.findall(r"--exclude\s+(\S+)", step)
         for package in (
-            "rhwp",
+            root_package,
             "rhwp-subsecond",
             "rhwp-native-ffi",
             "batch-convert",
         ):
             with self.subTest(package=package):
-                self.assertIn(f"--exclude {package}", step)
+                self.assertIn(package, excluded_packages)
         self.assertIn("--lib", step)
 
     def test_required_check_and_release_artifact_contracts_stay_stable(self) -> None:
