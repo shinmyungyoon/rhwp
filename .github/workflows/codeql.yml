@@ -952,10 +952,28 @@ jobs:
         run: |
           "$CODEQL_PATH" generate log-summary --format=overall \
             "$RUNNER_TEMP/rust-evaluator.jsonl" "$RUNNER_TEMP/rust-evaluator-summary.json"
-          "$CODEQL_PATH" generate log-summary --format=text --deduplicate-stage-summaries \
-            "$RUNNER_TEMP/rust-evaluator.jsonl" "$RUNNER_TEMP/rust-evaluator-summary.txt"
-          head -c 64000 "$RUNNER_TEMP/rust-evaluator-summary.json"
-          head -c 64000 "$RUNNER_TEMP/rust-evaluator-summary.txt"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          summary = json.loads((Path(os.environ["RUNNER_TEMP"]) / "rust-evaluator-summary.json").read_text())
+          print(json.dumps({"stats": summary["stats"]}))
+          for query, entries in sorted(summary["mostExpensivePerQuery"].items()):
+              top = sorted(entries, key=lambda item: item["millis"], reverse=True)[:5]
+              print(json.dumps({
+                  "query": Path(query).name,
+                  "predicates": [{
+                      "name": entry["predicateName"],
+                      "millis": entry["millis"],
+                      "hash": entry["raHash"],
+                      "shared_by": sorted({
+                          Path(path).name
+                          for queries in entry.get("appearsAs", {}).values()
+                          for path in queries
+                      }),
+                  } for entry in top],
+              }))
+          PY
 
       - name: Save Rust extractor Cargo cache
         if: ${{ success() && matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) && github.event_name == 'pull_request' && steps.codeql-analyze.outcome == 'success' && steps.rust-cargo-restore.outputs.cache-hit != 'true' }}
