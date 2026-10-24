@@ -20,10 +20,10 @@ Implemented hardening:
   no-edit save of stale preview text. Limit the excerpt to 1,000 Unicode
   scalar values. Preserve thumbnails and opaque resources.
 
-Combined validation of the preview-text update is pending. This excerpt
+This excerpt
 excludes tables and text boxes. HWP retains its existing cached-preview policy.
 
-The combined output, strict-input, and dependency changes passed 10,647
+The combined output, strict-input, dependency, and preview changes passed 10,649
 workspace tests on Rust 1.93.1, with 50 existing ignored tests and no failures.
 Native and WASM Clippy, formatting, workspace build, and test-policy checks passed.
 The filesystem controls apply to the CLI, not to library callers that write
