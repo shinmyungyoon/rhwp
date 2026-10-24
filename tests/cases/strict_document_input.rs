@@ -238,6 +238,156 @@ fn hwp_with_crc_trailers(body: &[u8]) -> Vec<u8> {
     bytes
 }
 
+fn hwp_binary_fixture(extension: &str) -> Vec<u8> {
+    let mut info = doc_info();
+    info.bin_data_list.push(rhwp::model::bin_data::BinData {
+        attr: 1,
+        data_type: rhwp::model::bin_data::BinDataType::Embedding,
+        storage_id: 1,
+        extension: Some(extension.into()),
+        ..Default::default()
+    });
+    let properties = rhwp::model::document::DocProperties {
+        section_count: 1,
+        ..Default::default()
+    };
+    let mut bytes = hwp(&body(), false, &[]);
+    let payload = rhwp::serializer::doc_info::serialize_doc_info(&info, &properties);
+    bytes = change_hwp_stream(bytes, "/DocInfo", |raw| *raw = payload);
+    let mut compound = cfb::CompoundFile::open(Cursor::new(bytes)).unwrap();
+    compound.create_storage("/BinData").unwrap();
+    compound
+        .create_stream(format!("/BinData/BIN0001.{extension}"))
+        .unwrap()
+        .write_all(b"Sample")
+        .unwrap();
+    compound.into_inner().into_inner()
+}
+
+fn rename_hwp_streams(bytes: &[u8], rename: impl Fn(&str) -> String) -> Vec<u8> {
+    let mut source = cfb::CompoundFile::open(Cursor::new(bytes)).unwrap();
+    let paths: Vec<_> = source
+        .walk()
+        .filter(|entry| entry.is_stream())
+        .map(|entry| entry.path().to_string_lossy().into_owned())
+        .collect();
+    let mut target =
+        cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new())).unwrap();
+    for path in paths {
+        let name = rename(&path);
+        target
+            .create_storage_all(std::path::Path::new(&name).parent().unwrap())
+            .unwrap();
+        let mut raw = Vec::new();
+        source
+            .open_stream(&path)
+            .unwrap()
+            .read_to_end(&mut raw)
+            .unwrap();
+        target
+            .create_stream(&name)
+            .unwrap()
+            .write_all(&raw)
+            .unwrap();
+    }
+    target.into_inner().into_inner()
+}
+
+#[test]
+fn strict_input_uses_cfb_name_identity_for_sections_and_binary_resources() {
+    let canonical = hwp_binary_fixture("png");
+    for variant in 0..5 {
+        let bytes = rename_hwp_streams(&canonical, |path| match variant {
+            0 => path.into(),
+            1 => path.to_ascii_lowercase(),
+            2 => path.to_ascii_uppercase(),
+            3 => path.replace(".png", ".PNG"),
+            _ => path.replace("Section", "sEcTiOn"),
+        });
+        let original = bytes.clone();
+        let document = parse_document_strict(&bytes).unwrap();
+        assert_eq!(document.sections[0].paragraphs[0].text, "Sample");
+        assert_eq!(document.bin_data_content.len(), 1);
+        assert_eq!(
+            document.bin_data_content[0].data.load().as_slice(),
+            b"Sample"
+        );
+        assert!(document.extra_streams.is_empty());
+        DocumentCore::from_bytes_strict(&bytes).unwrap();
+        rhwp::wasm_api::HwpDocument::from_bytes_strict(&bytes).unwrap();
+        let saved = rhwp::serializer::serialize_document(&document).unwrap();
+        let reloaded = parse_document_strict(&saved).unwrap();
+        assert_eq!(reloaded.sections[0].paragraphs[0].text, "Sample");
+        assert_eq!(reloaded.bin_data_content.len(), 1);
+        assert_eq!(bytes, original);
+    }
+    // Greek final sigma and sigma have the same CFB uppercase identity, but
+    // different lowercase forms. Resolve through the container, not Rust case conversion.
+    let bytes = rename_hwp_streams(&hwp_binary_fixture("ς"), |path| path.replace(".ς", ".σ"));
+    assert_eq!(parse_document(&bytes).unwrap().bin_data_content.len(), 1);
+    assert_eq!(
+        parse_document_strict(&bytes)
+            .unwrap()
+            .bin_data_content
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn strict_input_rejects_viewtext_case_aliases() {
+    for name in [
+        "/ViewText/Section0",
+        "/viewtext/section0",
+        "/VIEWTEXT/SECTION0",
+        "/vIeWtExT/Section0",
+    ] {
+        let mut compound = cfb::CompoundFile::open(Cursor::new(hwp(&body(), false, &[]))).unwrap();
+        compound
+            .create_storage_all(std::path::Path::new(name).parent().unwrap())
+            .unwrap();
+        compound
+            .create_stream(name)
+            .unwrap()
+            .write_all(b"Sample")
+            .unwrap();
+        let bytes = compound.into_inner().into_inner();
+        assert!(matches!(
+            parse_document_strict(&bytes),
+            Err(rhwp::parser::StrictParseError::Unsupported(
+                "HWP ViewText streams"
+            ))
+        ));
+        rejected(&bytes);
+        assert!(rhwp::wasm_api::HwpDocument::from_bytes_strict(&bytes).is_err());
+    }
+}
+
+#[test]
+fn strict_input_rejects_binary_resource_alias_duplicates() {
+    let mut info = doc_info();
+    for extension in ["png", "PNG"] {
+        info.bin_data_list.push(rhwp::model::bin_data::BinData {
+            attr: 1,
+            data_type: rhwp::model::bin_data::BinDataType::Embedding,
+            storage_id: 1,
+            extension: Some(extension.into()),
+            ..Default::default()
+        });
+    }
+    let properties = rhwp::model::document::DocProperties {
+        section_count: 1,
+        ..Default::default()
+    };
+    let payload = rhwp::serializer::doc_info::serialize_doc_info(&info, &properties);
+    let bytes = change_hwp_stream(hwp_binary_fixture("png"), "/DocInfo", |raw| *raw = payload);
+    assert_eq!(
+        parse_document_strict(&bytes).unwrap_err().to_string(),
+        "duplicate HWP binary resource ID"
+    );
+    rejected(&bytes);
+}
+
 #[test]
 fn strict_input_accepts_only_checked_hwp_deflate_trailers() {
     let mut header = vec![0; 22];

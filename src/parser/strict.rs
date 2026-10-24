@@ -806,6 +806,8 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
         paths.push((entry.path().to_path_buf(), entry.is_stream(), entry.len()));
     }
     let mut budget = Budget::new(limits);
+    let header_path = resolve_cfb_path(&compound, "/FileHeader")?;
+    let info_path = resolve_cfb_path(&compound, "/DocInfo")?;
     let header_bytes = budget.read(
         compound.open_stream("/FileHeader").map_err(invalid)?,
         limits,
@@ -823,10 +825,7 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
             "encrypted or protected HWP documents",
         ));
     }
-    if paths
-        .iter()
-        .any(|(path, _, _)| path.starts_with("/ViewText"))
-    {
+    if compound.exists("/ViewText") {
         return Err(StrictParseError::Unsupported("HWP ViewText streams"));
     }
     let raw_doc_info = read_cfb_stream(&mut compound, "/DocInfo", limits)?;
@@ -842,6 +841,12 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
     if properties.section_count == 0 {
         return Err(invalid("HWP has no sections"));
     }
+    let body_path = resolve_cfb_path(&compound, "/BodyText")?;
+    let mut section_paths = HashMap::new();
+    for index in 0..properties.section_count {
+        let path = resolve_cfb_path(&compound, &format!("/BodyText/Section{index}"))?;
+        section_paths.insert(path, index);
+    }
     let mut sections = HashSet::new();
     let mut bin_streams = HashMap::new();
     for resource in &doc_info.bin_data_list {
@@ -855,7 +860,10 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
                 "dat"
             },
         );
-        let path = format!("/BinData/BIN{:04X}.{extension}", resource.storage_id);
+        let path = resolve_cfb_path(
+            &compound,
+            &format!("/BinData/BIN{:04X}.{extension}", resource.storage_id),
+        )?;
         if bin_streams.insert(path, resource).is_some() {
             return Err(invalid("duplicate HWP binary resource ID"));
         }
@@ -864,8 +872,8 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
     let mut found_binary = HashSet::new();
     for (path, stream, length) in &paths {
         if !stream
-            || path == std::path::Path::new("/FileHeader")
-            || path == std::path::Path::new("/DocInfo")
+            || path == std::path::Path::new(&header_path)
+            || path == std::path::Path::new(&info_path)
         {
             continue;
         }
@@ -876,9 +884,8 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
             .to_str()
             .ok_or_else(|| invalid("invalid CFB stream name"))?;
         let raw = read_cfb_stream(&mut compound, name, limits)?;
-        if let Some(index) = name.strip_prefix("/BodyText/Section") {
-            let index: u16 = index.parse().map_err(invalid)?;
-            if name != format!("/BodyText/Section{index}") || !sections.insert(index) {
+        if let Some(index) = section_paths.get(name) {
+            if !sections.insert(*index) {
                 return Err(invalid("invalid HWP section name"));
             }
             let bytes = decode_hwp(&raw, header.flags.compressed, limits, &mut budget)?;
@@ -911,7 +918,7 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
             });
             found_binary.insert(name.to_string());
         } else {
-            if name.starts_with("/BodyText/") {
+            if path.starts_with(&body_path) {
                 return Err(invalid("unexpected HWP body stream"));
             }
             budget.bytes = budget
@@ -938,10 +945,46 @@ fn parse_hwp(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParseE
         },
     )
     .map_err(StrictParseError::Parse)?;
+    // The compatibility parser excludes modeled streams by their conventional
+    // spelling. Case aliases must not survive as opaque streams that could
+    // overwrite newly serialized content after an edit.
+    let mut modeled_paths: HashSet<_> = section_paths
+        .keys()
+        .chain(bin_streams.keys())
+        .cloned()
+        .collect();
+    modeled_paths.extend([header_path, info_path]);
+    for preview in ["/PrvImage", "/PrvText"] {
+        if compound.exists(preview) {
+            modeled_paths.insert(resolve_cfb_path(&compound, preview)?);
+        }
+    }
+    document
+        .extra_streams
+        .retain(|(path, _)| !modeled_paths.contains(path));
     // Keep the validated bytes. A later lazy read must not retry decompression
     // with a different limit or replace corrupt data with its compressed input.
     document.bin_data_content = binary_contents;
     Ok(document)
+}
+
+// Resolve each stored component through CFB's own name comparison. Rust Unicode
+// lowercasing does not implement the compound-file name identity rules.
+fn resolve_cfb_path(
+    compound: &cfb::CompoundFile<Cursor<&[u8]>>,
+    expected: &str,
+) -> Result<String, StrictParseError> {
+    let mut path = std::path::PathBuf::from("/");
+    for name in expected.split('/').filter(|name| !name.is_empty()) {
+        if matches!(name, "." | "..") {
+            return Err(invalid("invalid CFB stream path"));
+        }
+        let entry = compound.entry(path.join(name)).map_err(invalid)?;
+        path.push(entry.name());
+    }
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| invalid("invalid CFB stream name"))
 }
 
 fn read_cfb_stream(
