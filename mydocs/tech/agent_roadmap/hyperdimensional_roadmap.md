@@ -117,7 +117,6 @@ plan 문자열 잎 전부 sha256(값‖salt) 커밋 치환 + 비밀 개봉 파�
 | Aider 계열 | `CONVENTIONS.md` |
 | Zed 계열 | `.rules` |
 | Goose | `.goosehints` |
-| Replit Agent | `replit.md` |
 | RooCode / Kilo Code | `.roo/rules/ / .kilocode/rules/` |
 | JetBrains Junie | `.junie/guidelines.md` |
 | Trae | `.trae/rules/project_rules.md` |

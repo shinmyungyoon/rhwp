@@ -1105,7 +1105,6 @@ PR에 포함할 파일과 검증 범위는 이 문서가 정하며, 자동 로�
 | Aider 계열(컨벤션 파일) | `CONVENTIONS.md` |
 | Zed 계열(.rules) | `.rules` |
 | Goose | `.goosehints` |
-| Replit Agent | `replit.md` |
 | RooCode / Kilo Code | `.roo/rules/` / `.kilocode/rules/` |
 | JetBrains Junie | `.junie/guidelines.md` |
 | Trae / Amazon Q(일몰 예정·Kiro 승계) / Augment / Continue | `.trae/rules/` · `.amazonq/rules/` · `.augment/rules/` · `.continue/rules/` |
