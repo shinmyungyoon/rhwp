@@ -554,6 +554,59 @@ Authoritative resources useful to contributors and fork users are organized in t
 - [Investigation PR Guide](https://github.com/edwardkim/rhwp/wiki/Investigation-PR-가이드)
 - [Legal FAQ](https://github.com/edwardkim/rhwp/wiki/Legal-FAQ)
 
+## Cargo release checks
+
+Python 3.12 or later, Cargo, and the pinned Rust toolchain are required.
+Install the `wasm32-unknown-unknown` target before the checks.
+Run the helper from a complete checkout:
+
+```sh
+python3 scripts/cargo_release.py
+```
+
+The default command does not upload packages. It packages the four leaf
+dependencies, then the root package. Names and versions come from the manifests.
+It compares each archive with Cargo's file inventory and the required notices.
+A temporary directory source supplies unpublished dependencies.
+The helper then runs an external native consumer, checks an external WASM
+consumer, and runs both PDF gradient regression tests against the unpacked root
+archive. These checks do not establish asset ownership or Hancom output fidelity.
+
+The helper prints the location of `report.json`. The report records the source
+commit, archive hashes, and file inventories. Keep that directory for review.
+Use `--output /path/to/new-directory` to select an external output directory.
+Use `--target-dir /path/to/target/pr-review` to reuse an existing Cargo build cache.
+Do not run another Cargo job against that cache at the same time.
+Local checks remove registry credentials from every build environment.
+
+Publication requires a separate approval. The repository owner must configure
+required reviewers for the GitHub environment named `crates-io`.
+The publish workflow must use that protected environment and supply
+`CARGO_REGISTRY_TOKEN` only to its publish step. A tag alone does not approve
+publication. The helper accepts publication only during `workflow_dispatch`,
+with a clean checkout at the exact `cargo-v<root-version>` tag.
+The tagged commit must be reachable from the fetched `origin/main`.
+
+The protected workflow invokes this command after approval:
+
+```sh
+python3 scripts/cargo_release.py publish \
+  --confirm shin-rhwp@0.8.7 \
+  --commit "$(git rev-parse HEAD)"
+```
+
+Replace the name and version if the root manifest changes.
+The helper repeats local verification before any upload.
+Only the upload subprocess receives the registry credential.
+It publishes the four leaf packages first and waits at most 180 seconds for
+each exact version and archive checksum to appear in the registry.
+It then verifies the root archive and external consumers with real registry
+dependencies, without the temporary directory source, before the root upload.
+If a version already exists, recovery continues only when its checksum matches
+the verified archive and the version is not yanked. A mismatch stops the release.
+Do not replace a rejected checksum with a new expected value.
+Investigate the difference and use a new version when the package contents change.
+
 ## Notice
 
 This product was developed with reference to the HWP (.hwp) file format specification published by Hancom Inc.
