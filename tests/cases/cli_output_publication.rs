@@ -66,7 +66,10 @@ fn redaction_hwpx(text: &str, empty_tail: bool) -> Vec<u8> {
     let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..source.len() {
         let mut entry = source.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .expect("valid synthetic ZIP entry name")
+            .into_owned();
         let mut contents = String::new();
         std::io::Read::read_to_string(&mut entry, &mut contents).unwrap();
         if name == "Contents/section0.xml" {
