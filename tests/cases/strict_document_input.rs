@@ -1,4 +1,4 @@
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 
 use rhwp::document_core::DocumentCore;
 use rhwp::parser::{
@@ -204,6 +204,151 @@ fn hwp(body: &[u8], compressed: bool, extra: &[(&str, &[u8])]) -> Vec<u8> {
 fn rejected(bytes: &[u8]) {
     assert!(parse_document_strict(bytes).is_err());
     assert!(DocumentCore::from_bytes_strict(bytes).is_err());
+}
+
+fn change_hwp_stream(bytes: Vec<u8>, name: &str, change: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    let mut compound = cfb::CompoundFile::open(Cursor::new(bytes)).unwrap();
+    let mut raw = Vec::new();
+    compound
+        .open_stream(name)
+        .unwrap()
+        .read_to_end(&mut raw)
+        .unwrap();
+    change(&mut raw);
+    compound
+        .create_stream(name)
+        .unwrap()
+        .write_all(&raw)
+        .unwrap();
+    compound.into_inner().into_inner()
+}
+
+fn hwp_with_crc_trailers(body: &[u8]) -> Vec<u8> {
+    let mut bytes = hwp(body, true, &[]);
+    for name in ["/DocInfo", "/BodyText/Section0"] {
+        bytes = change_hwp_stream(bytes, name, |raw| {
+            let mut decoded = Vec::new();
+            flate2::read::DeflateDecoder::new(raw.as_slice())
+                .read_to_end(&mut decoded)
+                .unwrap();
+            raw.extend_from_slice(&crc32(&decoded).to_le_bytes());
+            raw.extend_from_slice(&(decoded.len() as u32).to_le_bytes());
+        });
+    }
+    bytes
+}
+
+#[test]
+fn strict_input_accepts_only_checked_hwp_deflate_trailers() {
+    let mut header = vec![0; 22];
+    header[..4].copy_from_slice(&20_001u32.to_le_bytes());
+    let mut large = record(rhwp::parser::tags::HWPTAG_PARA_HEADER, 0, &header);
+    let text: Vec<u8> = format!("{}\r", "A".repeat(20_000))
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    large.extend(record(rhwp::parser::tags::HWPTAG_PARA_TEXT, 1, &text));
+    for body in [body(), large.clone()] {
+        for bytes in [hwp(&body, true, &[]), hwp_with_crc_trailers(&body)] {
+            let original = bytes.clone();
+            let document = parse_document_strict(&bytes).unwrap();
+            assert!(!document.sections[0].paragraphs[0].text.is_empty());
+            DocumentCore::from_bytes_strict(&bytes).unwrap();
+            rhwp::wasm_api::HwpDocument::from_bytes_strict(&bytes).unwrap();
+            assert_eq!(bytes, original);
+        }
+    }
+    let large_bytes = hwp_with_crc_trailers(&large);
+    let limits = InputLimits {
+        max_entry_bytes: 8192,
+        ..Default::default()
+    };
+    assert!(parse_document_strict_with_limits(&large_bytes, &limits).is_err());
+    assert!(DocumentCore::from_bytes_strict_with_limits(&large_bytes, &limits).is_err());
+    assert!(
+        rhwp::wasm_api::HwpDocument::from_bytes_strict_with_limits(&large_bytes, &limits).is_err()
+    );
+    let bytes = hwp_with_crc_trailers(&body());
+    for name in ["/DocInfo", "/BodyText/Section0"] {
+        for invalid in 0..11 {
+            let changed = change_hwp_stream(bytes.clone(), name, |raw| {
+                let end = raw.len();
+                match invalid {
+                    0 => raw[end - 8] ^= 1,
+                    1 => raw[end - 4] ^= 1,
+                    2..=8 => raw.truncate(end - (invalid - 1)),
+                    9 => raw.push(0),
+                    _ => raw.extend_from_within(..end),
+                }
+            });
+            rejected(&changed);
+            assert!(rhwp::wasm_api::HwpDocument::from_bytes_strict(&changed).is_err());
+        }
+    }
+    let mut compound = cfb::CompoundFile::open(Cursor::new(&bytes)).unwrap();
+    let mut decoded_len = 0usize;
+    for name in ["/DocInfo", "/BodyText/Section0"] {
+        let mut decoded = Vec::new();
+        flate2::read::DeflateDecoder::new(compound.open_stream(name).unwrap())
+            .read_to_end(&mut decoded)
+            .unwrap();
+        decoded_len += decoded.len();
+    }
+    let total = 256 + decoded_len;
+    parse_document_strict_with_limits(
+        &bytes,
+        &InputLimits {
+            max_expanded_bytes: total,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    for limits in [
+        InputLimits {
+            max_entry_bytes: 32,
+            ..Default::default()
+        },
+        InputLimits {
+            max_expanded_bytes: total - 1,
+            ..Default::default()
+        },
+    ] {
+        assert!(parse_document_strict_with_limits(&bytes, &limits).is_err());
+        assert!(DocumentCore::from_bytes_strict_with_limits(&bytes, &limits).is_err());
+        assert!(
+            rhwp::wasm_api::HwpDocument::from_bytes_strict_with_limits(&bytes, &limits).is_err()
+        );
+    }
+}
+
+#[test]
+fn strict_input_does_not_accept_hwp_trailers_in_zip_entries() {
+    let plain = b"Sample";
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), Default::default());
+    encoder.write_all(plain).unwrap();
+    let mut raw = encoder.finish().unwrap();
+    let package = |raw: &[u8]| {
+        let mut bytes = hwpx_with(HEADER.as_bytes(), SECTION.as_bytes(), &[("extra.bin", raw)]);
+        let local_name = bytes.windows(9).position(|s| s == b"extra.bin").unwrap();
+        let local = local_name - 30;
+        let central = bytes.windows(4).rposition(|s| s == b"PK\x01\x02").unwrap();
+        bytes[local + 8..local + 10].copy_from_slice(&8u16.to_le_bytes());
+        bytes[central + 10..central + 12].copy_from_slice(&8u16.to_le_bytes());
+        bytes[local + 14..local + 18].copy_from_slice(&crc32(plain).to_le_bytes());
+        bytes[central + 16..central + 20].copy_from_slice(&crc32(plain).to_le_bytes());
+        bytes[local + 22..local + 26].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        bytes[central + 24..central + 28].copy_from_slice(&(plain.len() as u32).to_le_bytes());
+        bytes
+    };
+    parse_document_strict(&package(&raw)).unwrap();
+    raw.extend_from_slice(&crc32(plain).to_le_bytes());
+    raw.extend_from_slice(&(plain.len() as u32).to_le_bytes());
+    let bytes = package(&raw);
+    assert_eq!(
+        parse_document_strict(&bytes).unwrap_err().to_string(),
+        "trailing compressed stream data"
+    );
+    rejected(&bytes);
 }
 
 #[test]

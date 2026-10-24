@@ -524,7 +524,12 @@ fn parse_hwpx(data: &[u8], limits: &InputLimits) -> Result<Document, StrictParse
             return Err(StrictParseError::LimitExceeded("expanded bytes"));
         }
         if entry.method == 8
-            && inflate(&data[entry.payload.clone()], allowance, |_| {})? != entry.expanded as usize
+            && inflate(
+                &data[entry.payload.clone()],
+                allowance,
+                DeflateFraming::Exact,
+                |_| {},
+            )? != entry.expanded as usize
         {
             return Err(invalid("ZIP deflate output size mismatch"));
         }
@@ -959,7 +964,9 @@ fn decode_hwp(
     if compressed {
         let allowance = budget.bytes.min(limits.max_entry_bytes);
         let mut output = Vec::new();
-        let length = inflate(raw, allowance, |chunk| output.extend_from_slice(chunk))?;
+        let length = inflate(raw, allowance, DeflateFraming::Hwp, |chunk| {
+            output.extend_from_slice(chunk)
+        })?;
         budget.bytes -= length;
         Ok(output)
     } else {
@@ -967,12 +974,19 @@ fn decode_hwp(
     }
 }
 
+enum DeflateFraming {
+    Exact,
+    Hwp,
+}
+
 fn inflate(
     raw: &[u8],
     limit: usize,
+    framing: DeflateFraming,
     mut write: impl FnMut(&[u8]),
 ) -> Result<usize, StrictParseError> {
     let mut decoder = flate2::Decompress::new(false);
+    let mut crc = flate2::Crc::new();
     let mut produced = 0usize;
     let mut chunk = [0u8; 8192];
     loop {
@@ -990,9 +1004,20 @@ fn inflate(
             return Err(StrictParseError::LimitExceeded("expanded bytes"));
         }
         produced += written;
+        if matches!(framing, DeflateFraming::Hwp) {
+            crc.update(&chunk[..written]);
+        }
         write(&chunk[..written]);
         if status == flate2::Status::StreamEnd {
-            if decoder.total_in() != raw.len() as u64 {
+            let trailing = &raw[decoder.total_in() as usize..];
+            // HWP can retain the GZIP CRC32/ISIZE trailer without its header.
+            // ZIP entries require exact raw DEFLATE consumption instead.
+            if !trailing.is_empty()
+                && (!matches!(framing, DeflateFraming::Hwp)
+                    || trailing.len() != 8
+                    || u32_at(trailing, 0)? != crc.sum()
+                    || u32_at(trailing, 4)? != crc.amount())
+            {
                 return Err(invalid("trailing compressed stream data"));
             }
             return Ok(produced);
