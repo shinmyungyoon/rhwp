@@ -17,8 +17,9 @@ Implemented hardening:
   compound-file reader, including case-equivalent protected stream names.
 - Upgrade ZIP to version 9 and require ctutils 0.4.4 or later.
 
-Each component passed its required checks on Rust 1.93.1.
-Combined-fork validation is in progress.
+The combined output, strict-input, and dependency changes passed 10,647
+workspace tests on Rust 1.93.1, with 50 existing ignored tests and no failures.
+Native and WASM Clippy, formatting, workspace build, and test-policy checks passed.
 The filesystem controls apply to the CLI, not to library callers that write
 serialized bytes themselves.
 Strict input validation is opt-in; the existing recovery APIs remain available.
