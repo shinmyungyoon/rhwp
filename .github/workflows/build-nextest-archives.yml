@@ -203,6 +203,7 @@ jobs:
               ;;
           esac
 
+          python3 scripts/cargo_cache_inputs.py restore
           cargo nextest archive \
             --package shin-rhwp \
             --cargo-profile "${{ inputs.cargo_profile }}" \
@@ -222,6 +223,7 @@ jobs:
           fi
           printf '%s\n' "$runnable" > archive-expected-total.txt
           echo "archive=${{ inputs.archive_label }} expected_runnable=${runnable}"
+          python3 scripts/cargo_cache_inputs.py record
 
       - name: Upload test archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
