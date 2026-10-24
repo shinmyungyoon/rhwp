@@ -381,10 +381,11 @@ fn strict_input_rejects_binary_resource_alias_duplicates() {
     };
     let payload = rhwp::serializer::doc_info::serialize_doc_info(&info, &properties);
     let bytes = change_hwp_stream(hwp_binary_fixture("png"), "/DocInfo", |raw| *raw = payload);
-    assert_eq!(
-        parse_document_strict(&bytes).unwrap_err().to_string(),
-        "duplicate HWP binary resource ID"
-    );
+    assert!(matches!(
+        parse_document_strict(&bytes),
+        Err(rhwp::parser::StrictParseError::InvalidInput(message))
+            if message == "duplicate HWP binary resource ID"
+    ));
     rejected(&bytes);
 }
 
@@ -494,10 +495,11 @@ fn strict_input_does_not_accept_hwp_trailers_in_zip_entries() {
     raw.extend_from_slice(&crc32(plain).to_le_bytes());
     raw.extend_from_slice(&(plain.len() as u32).to_le_bytes());
     let bytes = package(&raw);
-    assert_eq!(
-        parse_document_strict(&bytes).unwrap_err().to_string(),
-        "trailing compressed stream data"
-    );
+    assert!(matches!(
+        parse_document_strict(&bytes),
+        Err(rhwp::parser::StrictParseError::InvalidInput(message))
+            if message == "trailing compressed stream data"
+    ));
     rejected(&bytes);
 }
 
