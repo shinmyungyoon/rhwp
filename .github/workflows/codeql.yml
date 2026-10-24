@@ -959,13 +959,15 @@ jobs:
           summary = json.loads((Path(os.environ["RUNNER_TEMP"]) / "rust-evaluator-summary.json").read_text())
           print(json.dumps({"stats": summary["stats"]}))
           for query, entries in sorted(summary["mostExpensivePerQuery"].items()):
-              top = sorted(entries, key=lambda item: item["millis"], reverse=True)[:5]
+              measured = [entry for entry in entries if "millis" in entry]
+              top = sorted(measured, key=lambda item: item["millis"], reverse=True)[:5]
               print(json.dumps({
                   "query": Path(query).name,
+                  "reused_entries": len(entries) - len(measured),
                   "predicates": [{
-                      "name": entry["predicateName"],
+                      "name": entry.get("predicateName"),
                       "millis": entry["millis"],
-                      "hash": entry["raHash"],
+                      "hash": entry.get("raHash"),
                       "shared_by": sorted({
                           Path(path).name
                           for queries in entry.get("appearsAs", {}).values()

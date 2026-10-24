@@ -48,6 +48,21 @@ class QueryExperimentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify_results(temporary, "a")
 
+    def test_query_pack_rules_in_extensions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rust.sarif"
+            expected = selected_ids("b")
+            path.write_text(json.dumps({"runs": [{
+                "tool": {
+                    "driver": {"rules": []},
+                    "extensions": [{"rules": [{"id": query} for query in expected]}],
+                },
+                "results": [],
+            }]}))
+            self.assertEqual(verify_results(temporary, "b")["security_queries"], sorted(expected))
+            with self.assertRaises(ValueError):
+                verify_results(temporary, "a")
+
 
 if __name__ == "__main__":
     unittest.main()

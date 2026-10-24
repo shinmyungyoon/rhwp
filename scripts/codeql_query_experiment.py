@@ -46,11 +46,12 @@ def verify_results(directory, group):
     rules = {
         rule["id"]
         for run in runs
-        for rule in run["tool"]["driver"]["rules"]
+        for component in [run["tool"]["driver"], *run["tool"].get("extensions", [])]
+        for rule in component.get("rules", [])
     }
     security = rules.intersection(SECURITY_IDS)
     if security != selected_ids(group):
-        raise ValueError(f"Security query coverage mismatch: {sorted(security)}")
+        raise ValueError(f"Security query coverage mismatch: all observed rules={sorted(rules)}")
     return {
         "group": group,
         "security_queries": sorted(security),
