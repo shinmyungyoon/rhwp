@@ -816,6 +816,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: Initialize CodeQL (Rust)
+        id: init-rust-pr
         if: ${{ matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) && github.event_name == 'pull_request' }}
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4 (2026-10-06)
         with:
@@ -845,8 +846,87 @@ jobs:
         if: ${{ matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) }}
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 브랜치 (2026-08-01 시점)
 
+      - name: Identify Rust extractor Cargo cache
+        id: rust-cargo-key
+        if: ${{ matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) && github.event_name == 'pull_request' }}
+        env:
+          CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ runner.temp }}/codeql-rust-cargo-target
+          CODEQL_PATH: ${{ steps.init-rust-pr.outputs.codeql-path }}
+          CODEQL_VERSION: ${{ steps.init-rust-pr.outputs.codeql-version }}
+          SOURCE_SHA: ${{ github.sha }}
+          CACHE_REPOSITORY: ${{ github.repository_id }}
+          CACHE_PR: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+
+          def output(*args):
+              return subprocess.check_output(args, text=True).strip()
+
+          source = output("git", "rev-parse", "HEAD")
+          pr = os.environ["CACHE_PR"]
+          if (os.environ["GITHUB_EVENT_NAME"] != "pull_request"
+                  or not pr.isdecimal()
+                  or os.environ["GITHUB_REF"] != f"refs/pull/{pr}/merge"
+                  or not re.fullmatch(r"[0-9a-f]{40}", source)
+                  or source != os.environ["SOURCE_SHA"]):
+              raise SystemExit("Cache requires the current PR merge checkout")
+          target = Path(os.environ["CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR"]).resolve()
+          if (target.is_relative_to(Path(os.environ["GITHUB_WORKSPACE"]).resolve())
+                  or target != Path(os.environ["RUNNER_TEMP"]).resolve() / "codeql-rust-cargo-target"):
+              raise SystemExit("Extractor cache must stay outside the workspace")
+          tools = Path(os.environ["CODEQL_PATH"]).resolve().parent / "rust/tools"
+          files = sorted(path for path in tools.rglob("*") if path.is_file())
+          if not files or not os.environ["CODEQL_VERSION"]:
+              raise SystemExit("Rust extractor identity is unavailable")
+          extractor = hashlib.sha256()
+          for path in files:
+              extractor.update(path.relative_to(tools).as_posix().encode() + b"\0")
+              with path.open("rb") as stream:
+                  extractor.update(hashlib.file_digest(stream, "sha256").digest())
+          identity = {
+              "cli": os.environ["CODEQL_VERSION"],
+              "extractor": extractor.hexdigest(),
+              "compiler": output("rustc", "--version", "--verbose"),
+              "toolchain": output("rustup", "show", "active-toolchain"),
+              "source": source,
+              "scope": [os.environ["CACHE_REPOSITORY"], os.environ["GITHUB_REF"]],
+              "platform": [os.environ["RUNNER_OS"], os.environ["RUNNER_ARCH"]],
+              "build-mode": "none",
+              "options": {key: value for key, value in os.environ.items()
+                          if key.startswith("CODEQL_EXTRACTOR_RUST_")},
+          }
+          fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+              stream.write(f"key=codeql-rust-cargo-v1-{fingerprint}\n")
+          PY
+
+      - name: Restore Rust extractor Cargo cache
+        id: rust-cargo-restore
+        if: ${{ matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) && github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/codeql-rust-cargo-target
+          key: ${{ steps.rust-cargo-key.outputs.key }}
+
       # [#5187] Rust는 명시적 none 모드로 분석한다. 동일 SHA 비교에서 현재 기본 경로와
       # 추출 파일·SARIF 지표가 같았고, none 모드가 더 짧아 Rust 자동 빌드 의존을 제거한다.
       - name: Perform CodeQL Analysis
+        id: codeql-analyze
         if: ${{ contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) }}
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4 (2026-10-06)
+        env:
+          CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ runner.temp }}/codeql-rust-cargo-target
+
+      - name: Save Rust extractor Cargo cache
+        if: ${{ success() && matrix.language == 'rust' && contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language)) && github.event_name == 'pull_request' && steps.codeql-analyze.outcome == 'success' && steps.rust-cargo-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/codeql-rust-cargo-target
+          key: ${{ steps.rust-cargo-key.outputs.key }}

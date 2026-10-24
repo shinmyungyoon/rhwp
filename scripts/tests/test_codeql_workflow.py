@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -274,10 +275,160 @@ class CodeQLWorkflowTests(unittest.TestCase):
         self.assertIn("languages: rust", rust_full_init)
         self.assertIn("build-mode: none", rust_full_init)
         self.assertNotIn("config-file:", rust_full_init)
-        self.assertNotIn("actions/cache/", analyze)
+        self.assertEqual(analyze.count("uses: actions/cache/"), 2)
+        self.assertNotIn("uses: actions/cache@", analyze)
         self.assertNotIn("cargo build", analyze)
         self.assertNotIn("rust-blocking-results", analyze)
         self.assertNotIn("actions/upload-artifact", analyze)
+
+    def _rust_cache_step(self, name: str) -> str:
+        return job_body(self.workflow, "analyze").split(
+            f"      - name: {name}\n", 1
+        )[1].split("\n      - name:", 1)[0]
+
+    def _run_rust_cache_identity(self, root: Path, **overrides: str) -> tuple[int, str]:
+        workspace = root / "workspace"
+        tools = root / "codeql/rust/tools"
+        commands = root / "bin"
+        for directory in (workspace, tools, commands, root / "temp"):
+            directory.mkdir(parents=True, exist_ok=True)
+        extractor = tools / "extractor"
+        if not extractor.exists():
+            extractor.write_bytes(b"fixed extractor compiler")
+        for command, variable in (
+            ("git", "FAKE_HEAD"), ("rustc", "FAKE_COMPILER"), ("rustup", "FAKE_TOOLCHAIN")
+        ):
+            executable = commands / command
+            executable.write_text(
+                f"#!{sys.executable}\nimport os\nprint(os.environ[{variable!r}])\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+        output = root / "output"
+        output.write_text("", encoding="utf-8")
+        environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("CODEQL_EXTRACTOR_RUST_")
+        }
+        environment.update({
+            "PATH": str(commands) + os.pathsep + os.environ["PATH"],
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_REF": "refs/pull/12/merge",
+            "GITHUB_WORKSPACE": str(workspace),
+            "RUNNER_TEMP": str(root / "temp"),
+            "RUNNER_OS": "Linux",
+            "RUNNER_ARCH": "X64",
+            "GITHUB_OUTPUT": str(output),
+            "CACHE_PR": "12",
+            "CACHE_REPOSITORY": "123",
+            "SOURCE_SHA": "a" * 40,
+            "FAKE_HEAD": "a" * 40,
+            "CODEQL_PATH": str(root / "codeql/codeql"),
+            "CODEQL_VERSION": "2.27.3",
+            "FAKE_COMPILER": "rustc fixture\nhost: fixture-linux",
+            "FAKE_TOOLCHAIN": "stable-fixture-linux",
+            "CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR":
+                str(root / "temp/codeql-rust-cargo-target"),
+        })
+        environment.update(overrides)
+        step = self._rust_cache_step("Identify Rust extractor Cargo cache")
+        script = step.split("          python3 - <<'PY'\n", 1)[1].split(
+            "\n          PY", 1
+        )[0]
+        script = "\n".join(line.removeprefix("          ") for line in script.splitlines())
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=workspace, env=environment,
+            capture_output=True, text=True, check=False,
+        )
+        return result.returncode, output.read_text(encoding="utf-8").strip()
+
+    def test_rust_cache_identity_is_stable_and_invalidates_every_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            status, baseline = self._run_rust_cache_identity(root)
+            self.assertEqual(status, 0)
+            self.assertRegex(baseline, r"^key=codeql-rust-cargo-v1-[0-9a-f]{64}$")
+            self.assertEqual(self._run_rust_cache_identity(root), (0, baseline))
+            for changes in (
+                {"CODEQL_VERSION": "2.27.4"},
+                {"FAKE_COMPILER": "rustc changed compiler"},
+                {"FAKE_TOOLCHAIN": "nightly-fixture-linux"},
+                {"SOURCE_SHA": "b" * 40, "FAKE_HEAD": "b" * 40},
+                {"CODEQL_EXTRACTOR_RUST_OPTION_CARGO_FEATURES": "changed option"},
+                {"CACHE_REPOSITORY": "456"},
+                {"CACHE_PR": "13", "GITHUB_REF": "refs/pull/13/merge"},
+                {"RUNNER_ARCH": "ARM64"},
+            ):
+                with self.subTest(changes=changes):
+                    status, changed = self._run_rust_cache_identity(root, **changes)
+                    self.assertEqual(status, 0)
+                    self.assertNotEqual(changed, baseline)
+            (root / "codeql/rust/tools/extractor").write_bytes(b"changed fixed compiler")
+            status, changed = self._run_rust_cache_identity(root)
+            self.assertEqual(status, 0)
+            self.assertNotEqual(changed, baseline)
+
+    def test_rust_cache_rejects_untrusted_context_or_workspace_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for changes in (
+                {"GITHUB_EVENT_NAME": "pull_request_target"},
+                {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
+                {"GITHUB_REF": "refs/pull/99/merge"},
+                {"SOURCE_SHA": "b" * 40},
+                {"CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR": str(root / "workspace/target")},
+                {"CODEQL_VERSION": ""},
+                {"CODEQL_PATH": str(root / "missing/codeql")},
+            ):
+                with self.subTest(changes=changes):
+                    status, output = self._run_rust_cache_identity(root, **changes)
+                    self.assertNotEqual(status, 0)
+                    self.assertEqual(output, "")
+
+    def test_rust_cache_is_exact_pr_only_and_saves_only_successful_analysis(self) -> None:
+        selection = "contains(format(',{0},', env.SELECTED_LANGUAGES), format(',{0},', matrix.language))"
+        names = (
+            "Identify Rust extractor Cargo cache", "Restore Rust extractor Cargo cache",
+            "Save Rust extractor Cargo cache",
+        )
+        for name in names:
+            step = self._rust_cache_step(name)
+            condition = re.search(r"if: \$\{\{ (.*?) \}\}", step).group(1)
+            for event in ("pull_request", "pull_request_target", "push", "schedule", "workflow_dispatch"):
+                for language in ("rust", "python"):
+                    for selected in (True, False):
+                        for successful in (True, False):
+                            for hit in ("true", "false", ""):
+                                expression = condition.replace(selection, str(selected))
+                                for variable, value in (
+                                    ("matrix.language", language), ("github.event_name", event),
+                                    ("steps.codeql-analyze.outcome", "success" if successful else "failure"),
+                                    ("steps.rust-cargo-restore.outputs.cache-hit", hit),
+                                ):
+                                    expression = expression.replace(variable, repr(value))
+                                expression = expression.replace("success()", str(successful))
+                                expression = expression.replace("&&", " and ").replace("||", " or ")
+                                actual = eval(expression, {"__builtins__": {}}, {})
+                                expected = event == "pull_request" and language == "rust" and selected
+                                if name.startswith("Save"):
+                                    expected = expected and successful and hit != "true"
+                                self.assertEqual(actual, expected, (name, event, language, hit))
+        analyze = job_body(self.workflow, "analyze")
+        for name in (names[0], "Perform CodeQL Analysis"):
+            self.assertIn(
+                "CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ runner.temp }}/codeql-rust-cargo-target",
+                self._rust_cache_step(name),
+            )
+        for name, action in ((names[1], "restore"), (names[2], "save")):
+            step = self._rust_cache_step(name)
+            self.assertIn(
+                f"actions/cache/{action}@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", step,
+            )
+            self.assertIn("path: ${{ runner.temp }}/codeql-rust-cargo-target", step)
+            self.assertIn("key: ${{ steps.rust-cargo-key.outputs.key }}", step)
+            self.assertNotIn("restore-keys:", step)
+        self.assertLess(analyze.index(names[1]), analyze.index("Perform CodeQL Analysis"))
+        self.assertGreater(analyze.index(names[2]), analyze.index("Perform CodeQL Analysis"))
 
     def test_pr_rust_config_limits_scanning_to_production_paths(self) -> None:
         config = RUST_PR_CODEQL_CONFIG.read_text(encoding="utf-8")
